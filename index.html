@@ -197,7 +197,7 @@
 
   </script>
   <script>
-    $(function() { $('img[old-src]').each(function(i, src) { new Image(src) }); });
+    $('img[old-src]').each(function() { (new Image()).src = $(this).attr("old-src"); });
   </script>
 </body>
 </html>
