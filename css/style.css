@@ -25,7 +25,6 @@ height: 100vh;
 .sign {
   width: 200pt;
   opacity: 40%;
-  display: block;
 }
 .sign:hover {
   opacity: 100%;
