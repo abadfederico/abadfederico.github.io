@@ -1,11 +1,39 @@
 body {
 font-family: 'Montserrat', 'sans-serif';
 -webkit-font-smoothing: antialiased;
-padding: 0
+padding: 0;
+background: #020202;
+width: 100%;
+text-align: center;
+margin: 0 auto;
+height: 100vh;
+
 }
+
+
+.wrapper {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+}
+.content {
+  margin: auto;
+  max-width: 700px;
+}
+
+
+.sign {
+  width: 200pt;
+  opacity: 40%;
+  display: block;
+}
+.sign:hover {
+  opacity: 100%;
+}
+
 header, #footer {
   text-align: center;
-  color:#000;
+  color:#FFF;
   padding-bottom: 80px;
 
 }
