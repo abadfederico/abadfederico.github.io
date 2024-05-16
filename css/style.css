@@ -7,7 +7,9 @@ body {
     margin: 0;
     background-color: #090809;
 }
-
+video::-webkit-media-controls {
+  display: none !important;
+}
 .video-container {
     margin-bottom: 20px;
     width: 100%;
@@ -35,7 +37,6 @@ button {
 }
 
 button:hover {
-
     opacity: 1;
 }
 
