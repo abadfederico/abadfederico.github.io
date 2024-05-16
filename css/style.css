@@ -44,5 +44,5 @@ button.muted {
 }
 
 button.unmuted {
-   background: url( ../img/'sound.svg' ) no-repeat center center;
+   background: url( '../img/sound.svg' ) no-repeat center center;
 }
