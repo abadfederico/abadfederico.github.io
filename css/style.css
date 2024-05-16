@@ -1,295 +1,49 @@
 body {
-font-family: 'Montserrat', 'sans-serif';
--webkit-font-smoothing: antialiased;
-padding: 0;
-background: #020202;
-width: 100%;
-text-align: center;
-margin: 0 auto;
-height: 100vh;
-
-}
-
-
-.wrapper {
-  height: 100%;
-  display: flex;
-  justify-content: center;
-}
-.content {
-  margin: auto;
-  max-width: 700px;
-}
-
-
-.sign {
-  width: 200pt;
-  opacity: 40%;
-}
-.sign:hover {
-  opacity: 100%;
-}
-
-header, #footer {
-  text-align: center;
-  color:#FFF;
-  padding-bottom: 80px;
-
-}
-
-header img, #footer img  {
-  margin:0 10px;
-  opacity: 1;
-}
-
-header a:hover ,#footer a:hover  {
-  text-decoration: none;
-}
-
-header .btn {
-  border: 2px solid #c0392b;
-  color:#c0392b;
-  transition: background 0.1s linear;
-}
-
-header .btn:hover {
-  border: 2px solid #c0392b;
-  color:#FFF;
-  background:#c0392b;
-}
-
-.container {
-  max-width:800px;
-}
-
-#footer h2 {
-  font-weight: normal; margin-bottom: 1.5em
-}
-
-#footer{
-  margin: 5em 0 10em 0
-}
-footer {
-  padding:50px;
-  text-align:center;
-  background: #111
-}
-
-footer p {
-  font-size: 32px;
-  color:#FFF;
-}
-
-h1 svg {
-  width:100px;
-  height: 100px;
-  margin:30px 0;
-}
-h1 path {
-  fill:#111!important;
-}
-
-
-h2.title {
-  margin-top:1em;
-}
-.social {
-  margin-bottom:40px;
-}
-.social a {
-  color:#CCC;
-  transition: color 0.1s linear;
-}
-
-.social .twitter:hover {  color:#55ACEE; }
-.social .facebook:hover {  color:#3B5998; }
-.social .instagram:hover {  color:#9e7144; }
-.social .dribbble:hover {  color:#ea4c89; }
-.social .linkedin:hover {  color:#4875B4; }
-.social .github:hover {  color:#333333; }
-
-
-.social i {
-  margin: 0 20px;
-}
-
-p.lead {
-  font-size: 22px;
-  font-weight: 100;
-  color:#888;
-  margin-bottom: 30px
-}
-p {
-  font-size: 1.15em;
-  line-height: 1.7em;
-}
-
-.description {
-  border-top: 1px solid #e8e8e8;
-  padding-top: 20px;
-}
-
-h4 {
-  font-size: 28px;
-  font-weight: bold;
-  margin-bottom: 20px
-}
-
-hr.mini {
-  width:100px;
-  text-align: left;
-  margin:10px 0 20px 0;
-  opacity: 0.2
-}
-
-.thumb {
-  margin:10px 0 40px 0;
-  width:100%;
-}
-/*
-section img {
-  opacity: 0
-}
-*/
-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
     margin: 0;
+    background-color: #090809;
+}
+
+.video-container {
+    margin-bottom: 20px;
+    width: 100%;
+    margin: 0 auto;
     text-align: center;
-    padding:100px 0;
 }
 
-section * {
-    color:inherit;
+video {
+    width: 100%;
+    max-width: 700px;
+    margin: 0 auto;
+    text-align: center;
 }
 
-section h2 {
-  font-weight: bold;
-  margin:0;
-  font-size: 48px
-}
-
-section h3 {
-    margin:0 0 40px 0;
-    opacity: 0.5
-}
-
-section p {
-  opacity: 0.5;
-  font-size: 16px;
-}
-
-#taringa {
-  background: #006595;
-  color:#FFF;
-}
-
-
-#popcorn {
-  background: #161616;
-  color:#FFF;
-}
-
-#comollego {
-  background: #ffd300;
-}
-
-#comollego hr {
-  color:#000;
-  background: #000;
-  border-color: #000
-}
-
-#comollego p {
-  color:#000;
-}
-
-
-#preview .screens {
-  position: relative;
-}
-
-
-.text-left {
-  text-align: left;
-}
-
-nav {
-  padding: 3em 0;
-  opacity: 0.7
-}
-
-
-.iphone {
-  max-width: 400px
-}
-
-.b-n-a {
-  margin-top:-100px;
-}
-
-
-
-.header--clone{
-position: fixed;
-top: 0;
-left: 0;
-background: rgba(255,255,255,1);
--webkit-transform: translateY(-100%);
--ms-transform: translateY(-100%);
-transform: translateY(-100%);
--webkit-transition: all 300ms ease-in-out;
--moz-transition: all 300ms ease-in-out;
-transition: all 300ms ease-in-out;
-width:100%;
-box-shadow: 0 1px 2px rgba(0,0,0,0.1)
-}
-
-.header--stick {
--webkit-transform: translateY(0%);
--ms-transform: translateY(0%);
-transform: translateY(0%);
-z-index: 4000
-}
-
-.header--clone {
-  width:100%;
-  padding: 0;
+button {
+    font-size: 16px;
+    cursor: pointer;
+    border: none;
+    color: #FFF;
+    transition: color 0.3s ease;
+    opacity: .2;
+    width: 60px;
+    height: 60px;
+    background-color: red;
 
 }
 
-.header--clone h1 {
-  margin:0  20px;
-  position: absolute;
-  left: 50%;
-  margin-left: -20px;
-  margin-top:10px;
-} 
+button:hover {
 
-.header--clone h1 svg {
-  width:40px;
-   height:40px;
-  margin:0;
-  opacity: 0.1
+    opacity: 1;
 }
 
-.header--clone p.lead {
-  display: none
+button.muted {
+   background: url( 'muted.svg' ) no-repeat center center;
 }
 
-.header--clone .social {
-  margin:0;
-  float: left;
-  padding: 20px
+button.unmuted {
+   background: url( 'sound.svg' ) no-repeat center center;
 }
-
-
-.header--clone .btn {
-  float: right;
-  margin: 12px 20px
-}
-@media (max-width: 768px) {
- .header--stick{
-    display: none
-  }
-}
-
-
