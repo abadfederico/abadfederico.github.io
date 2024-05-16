@@ -31,6 +31,7 @@ button {
     opacity: .2;
     width: 60px;
     height: 60px;
+    background: none;
 }
 
 button:hover {
