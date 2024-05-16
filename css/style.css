@@ -41,9 +41,9 @@ button:hover {
 }
 
 button.muted {
-   background: url( 'muted.svg' ) no-repeat center center;
+   background: url( '../img/muted.svg' ) no-repeat center center;
 }
 
 button.unmuted {
-   background: url( 'sound.svg' ) no-repeat center center;
+   background: url( ../img/'sound.svg' ) no-repeat center center;
 }
