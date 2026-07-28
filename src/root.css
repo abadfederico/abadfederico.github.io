@@ -1,0 +1,9 @@
+:root {
+  --font-geist-sans: Arial, Helvetica, system-ui, sans-serif;
+  --font-geist-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
