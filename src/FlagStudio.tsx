@@ -1755,6 +1755,22 @@ export function FlagStudio() {
   const [artworkName, setArtworkName] = useState(INITIAL_DESIGN.label);
 
   useEffect(() => {
+    const activePreset = DESIGN_PRESETS.find(
+      (design) => design.id === activeDesign,
+    );
+    const backgroundColor = activePreset?.identityBackground ?? "#0b0b0c";
+    const themeColor = document.querySelector<HTMLMetaElement>(
+      'meta[name="theme-color"]',
+    );
+
+    document.documentElement.style.setProperty(
+      "--background",
+      backgroundColor,
+    );
+    themeColor?.setAttribute("content", backgroundColor);
+  }, [activeDesign]);
+
+  useEffect(() => {
     simulationSettingsRef.current = {
       wind,
       flagSize,
