@@ -61,6 +61,10 @@ type ClothAudioMetrics = {
   impact: number;
 };
 
+type ClothStepMetrics = ClothAudioMetrics & {
+  releasedGrab: boolean;
+};
+
 type TransitionOrigin = {
   x: number;
   y: number;
@@ -124,7 +128,7 @@ type BackgroundControls = Pick<
 >;
 
 type ControlTab =
-  | "wind"
+  | "motion"
   | "sound"
   | "grab"
   | "material"
@@ -797,33 +801,10 @@ const edgeFragmentShader = /* glsl */ `
   }
 `;
 
-function createDefaultArtwork() {
+function createEmptyArtwork() {
   const artwork = document.createElement("canvas");
   artwork.width = 1024;
   artwork.height = 576;
-  const context = artwork.getContext("2d");
-
-  if (!context) return artwork;
-
-  context.clearRect(0, 0, artwork.width, artwork.height);
-  context.strokeStyle = "rgba(255,255,255,0.94)";
-  context.fillStyle = "rgba(255,255,255,0.94)";
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  context.lineWidth = 28;
-
-  context.beginPath();
-  context.arc(452, 258, 80, Math.PI * 0.18, Math.PI * 1.82);
-  context.stroke();
-  context.beginPath();
-  context.arc(572, 258, 80, Math.PI * 1.18, Math.PI * 0.82);
-  context.stroke();
-
-  context.font = "600 20px Arial, sans-serif";
-  context.textAlign = "center";
-  context.letterSpacing = "5px";
-  context.fillText("ABAD FEDERICO * HUMAN", 512, 394);
-
   return artwork;
 }
 
@@ -1156,9 +1137,11 @@ function createClothSimulation(
   const uvAttribute = geometry.getAttribute("uv") as THREE.BufferAttribute;
   const vertexCount = positions.length / 3;
   const pinned = new Uint8Array(vertexCount);
+  const grabInfluence = new Float32Array(vertexCount);
   const constraints: ClothConstraint[] = [];
   const rowLength = columns + 1;
-  const selfCollisionDistance = 0.055;
+  const selfCollisionDistance = 0.06;
+  const selfCollisionStiffness = 0.88;
   const spatialHash = new Map<number, number[]>();
   const spatialBuckets: number[][] = [];
   const baseConstraintIterations =
@@ -1167,6 +1150,7 @@ function createClothSimulation(
   let simulationFrame = 0;
   let lastFreeEdgeVelocity = 0;
   let lastMotionEnergy = 0;
+  let unsafeGrabFrames = 0;
   let grabSettings = { ...INITIAL_GRAB };
   let grabState: {
     targetX: number;
@@ -1238,10 +1222,12 @@ function createClothSimulation(
 
   const reset = () => {
     grabState = null;
+    grabInfluence.fill(0);
     positions.set(restPositions);
     previousPositions.set(restPositions);
     lastFreeEdgeVelocity = 0;
     lastMotionEnergy = 0;
+    unsafeGrabFrames = 0;
 
     for (let row = 0; row <= rows; row += 1) {
       for (let column = 1; column <= columns; column += 1) {
@@ -1310,8 +1296,14 @@ function createClothSimulation(
   const solveSelfCollisions = () => {
     spatialHash.clear();
     let usedBuckets = 0;
+    let collisionCount = 0;
+    let grabbedCollisionCount = 0;
+    let predictedGrabCollisionCount = 0;
+    let maximumPenetration = 0;
     const minimumDistanceSquared =
       selfCollisionDistance * selfCollisionDistance;
+    const warningDistance = selfCollisionDistance * 1.35;
+    const warningDistanceSquared = warningDistance * warningDistance;
 
     for (let particle = 0; particle < vertexCount; particle += 1) {
       const particle3 = particle * 3;
@@ -1351,7 +1343,52 @@ function createClothSimulation(
               let dy = positions[particle3 + 1] - positions[nearby3 + 1];
               let dz = positions[particle3 + 2] - positions[nearby3 + 2];
               const distanceSquared = dx * dx + dy * dy + dz * dz;
-              if (distanceSquared >= minimumDistanceSquared) continue;
+              if (distanceSquared >= warningDistanceSquared) continue;
+
+              const involvesGrabbedParticle =
+                grabInfluence[particle] > 0.08 ||
+                grabInfluence[nearby] > 0.08;
+              if (distanceSquared >= minimumDistanceSquared) {
+                if (!involvesGrabbedParticle) continue;
+                const warningDistanceToPair = Math.sqrt(distanceSquared);
+                if (warningDistanceToPair < 0.000001) continue;
+                const inverseWarningDistance =
+                  1 / warningDistanceToPair;
+                const particleVelocityX =
+                  positions[particle3] - previousPositions[particle3];
+                const particleVelocityY =
+                  positions[particle3 + 1] -
+                  previousPositions[particle3 + 1];
+                const particleVelocityZ =
+                  positions[particle3 + 2] -
+                  previousPositions[particle3 + 2];
+                const nearbyVelocityX =
+                  positions[nearby3] - previousPositions[nearby3];
+                const nearbyVelocityY =
+                  positions[nearby3 + 1] -
+                  previousPositions[nearby3 + 1];
+                const nearbyVelocityZ =
+                  positions[nearby3 + 2] -
+                  previousPositions[nearby3 + 2];
+                const approach =
+                  dx *
+                    inverseWarningDistance *
+                    (particleVelocityX - nearbyVelocityX) +
+                  dy *
+                    inverseWarningDistance *
+                    (particleVelocityY - nearbyVelocityY) +
+                  dz *
+                    inverseWarningDistance *
+                    (particleVelocityZ - nearbyVelocityZ);
+                if (
+                  approach < -0.0015 &&
+                  warningDistanceToPair + approach <
+                    selfCollisionDistance * 0.92
+                ) {
+                  predictedGrabCollisionCount += 1;
+                }
+                continue;
+              }
 
               let distance = Math.sqrt(distanceSquared);
               if (distance < 0.000001) {
@@ -1371,11 +1408,29 @@ function createClothSimulation(
               if (particlePinned && nearbyPinned) continue;
 
               const separation =
-                (selfCollisionDistance - distance) * 0.76;
+                (selfCollisionDistance - distance) *
+                selfCollisionStiffness;
+              maximumPenetration = Math.max(
+                maximumPenetration,
+                (selfCollisionDistance - distance) /
+                  selfCollisionDistance,
+              );
+              if (involvesGrabbedParticle) {
+                grabbedCollisionCount += 1;
+              }
+              const particleMobility = particlePinned
+                ? 0
+                : 1 - grabInfluence[particle] * 0.85;
+              const nearbyMobility = nearbyPinned
+                ? 0
+                : 1 - grabInfluence[nearby] * 0.85;
+              const totalMobility =
+                particleMobility + nearbyMobility;
+              if (totalMobility < 0.000001) continue;
               const particleShare =
-                particlePinned ? 0 : nearbyPinned ? 1 : 0.5;
+                particleMobility / totalMobility;
               const nearbyShare =
-                nearbyPinned ? 0 : particlePinned ? 1 : 0.5;
+                nearbyMobility / totalMobility;
               const particleCorrection = separation * particleShare;
               const nearbyCorrection = separation * nearbyShare;
 
@@ -1398,6 +1453,7 @@ function createClothSimulation(
                 dy * nearbyCorrection * 0.35;
               previousPositions[nearby3 + 2] -=
                 dz * nearbyCorrection * 0.35;
+              collisionCount += 1;
             }
           }
         }
@@ -1416,10 +1472,18 @@ function createClothSimulation(
         spatialHash.set(key, bucket);
       }
     }
+
+    return {
+      collisionCount,
+      grabbedCollisionCount,
+      predictedGrabCollisionCount,
+      maximumPenetration,
+    };
   };
 
   const applyGrabConstraint = () => {
-    if (!grabState) return;
+    if (!grabState) return 0;
+    let maximumGrabStress = 0;
 
     for (const grabbed of grabState.particles) {
       if (pinned[grabbed.index] === 1) continue;
@@ -1440,6 +1504,14 @@ function createClothSimulation(
         (targetY - positions[particle3 + 1]) * influence;
       const correctionZ =
         (targetZ - positions[particle3 + 2]) * influence;
+      maximumGrabStress = Math.max(
+        maximumGrabStress,
+        Math.hypot(
+          targetX - positions[particle3],
+          targetY - positions[particle3 + 1],
+          targetZ - positions[particle3 + 2],
+        ),
+      );
 
       positions[particle3] += correctionX;
       positions[particle3 + 1] += correctionY;
@@ -1453,6 +1525,8 @@ function createClothSimulation(
       previousPositions[particle3 + 2] +=
         correctionZ * previousCorrection;
     }
+
+    return maximumGrabStress;
   };
 
   const step = (
@@ -1464,6 +1538,11 @@ function createClothSimulation(
     const substeps = 2;
     const substep = Math.min(delta, 1 / 30) / substeps;
     const squaredStep = substep * substep;
+    let midstepSelfCollisionRan = false;
+    let maximumPenetration = 0;
+    let maximumGrabbedCollisions = 0;
+    let maximumPredictedGrabCollisions = 0;
+    let maximumGrabStress = 0;
 
     for (let substepIndex = 0; substepIndex < substeps; substepIndex += 1) {
       const gustSignal =
@@ -1555,17 +1634,127 @@ function createClothSimulation(
         positions[pinnedVertex + 1] = restPositions[pinnedVertex + 1];
         positions[pinnedVertex + 2] = restPositions[pinnedVertex + 2];
       }
-      applyGrabConstraint();
+      maximumGrabStress = Math.max(
+        maximumGrabStress,
+        applyGrabConstraint(),
+      );
+
+      const useMidstepSelfCollision =
+        grabState !== null &&
+        (
+          columns <= 72 ||
+          (substepIndex === 0 && simulationFrame % 2 === 0)
+        );
+      if (useMidstepSelfCollision) {
+        const collisionResult = solveSelfCollisions();
+        maximumPenetration = Math.max(
+          maximumPenetration,
+          collisionResult.maximumPenetration,
+        );
+        maximumGrabbedCollisions = Math.max(
+          maximumGrabbedCollisions,
+          collisionResult.grabbedCollisionCount,
+        );
+        maximumPredictedGrabCollisions = Math.max(
+          maximumPredictedGrabCollisions,
+          collisionResult.predictedGrabCollisionCount,
+        );
+        midstepSelfCollisionRan = true;
+      }
     }
 
     simulationFrame += 1;
     const selfCollisionCadence =
       grabState !== null || columns <= 48 ? 1 : columns <= 72 ? 2 : 3;
-    if (simulationFrame % selfCollisionCadence === 0) {
-      solveSelfCollisions();
-    }
     solveConstraints();
-    applyGrabConstraint();
+    maximumGrabStress = Math.max(
+      maximumGrabStress,
+      applyGrabConstraint(),
+    );
+    if (simulationFrame % selfCollisionCadence === 0) {
+      const collisionsResolved = solveSelfCollisions();
+      maximumPenetration = Math.max(
+        maximumPenetration,
+        collisionsResolved.maximumPenetration,
+      );
+      maximumGrabbedCollisions = Math.max(
+        maximumGrabbedCollisions,
+        collisionsResolved.grabbedCollisionCount,
+      );
+      maximumPredictedGrabCollisions = Math.max(
+        maximumPredictedGrabCollisions,
+        collisionsResolved.predictedGrabCollisionCount,
+      );
+      const needsAdaptiveSecondPass =
+        !midstepSelfCollisionRan &&
+        columns <= 72 &&
+        collisionsResolved.collisionCount >
+          Math.max(12, vertexCount * 0.004);
+      if (needsAdaptiveSecondPass) {
+        const secondPass = solveSelfCollisions();
+        maximumPenetration = Math.max(
+          maximumPenetration,
+          secondPass.maximumPenetration,
+        );
+        maximumGrabbedCollisions = Math.max(
+          maximumGrabbedCollisions,
+          secondPass.grabbedCollisionCount,
+        );
+        maximumPredictedGrabCollisions = Math.max(
+          maximumPredictedGrabCollisions,
+          secondPass.predictedGrabCollisionCount,
+        );
+      }
+    }
+
+    let releasedGrab = false;
+    if (grabState) {
+      const grabbedParticleCount = grabState.particles.length;
+      const collisionOverloadThreshold = Math.max(
+        10,
+        grabbedParticleCount * 0.24,
+      );
+      const imminentCollisionThreshold = Math.max(
+        6,
+        grabbedParticleCount * 0.12,
+      );
+      const catastrophicPenetration =
+        maximumPenetration > 0.78 ||
+        maximumGrabStress > 1.25;
+      const unsafeCollision =
+        (
+          maximumPenetration > 0.56 &&
+          maximumGrabbedCollisions >= 3
+        ) ||
+        (
+          maximumPenetration > 0.34 &&
+          maximumGrabbedCollisions >
+            collisionOverloadThreshold
+        ) ||
+        maximumPredictedGrabCollisions >
+          imminentCollisionThreshold ||
+        (
+          maximumGrabStress > 0.72 &&
+          (
+            maximumGrabbedCollisions > 0 ||
+            maximumPredictedGrabCollisions > 0
+          )
+        ) ||
+        maximumGrabStress > 0.95;
+
+      unsafeGrabFrames = unsafeCollision
+        ? unsafeGrabFrames + 1
+        : Math.max(unsafeGrabFrames - 1, 0);
+
+      if (catastrophicPenetration || unsafeGrabFrames >= 2) {
+        grabState = null;
+        grabInfluence.fill(0);
+        unsafeGrabFrames = 0;
+        releasedGrab = true;
+      }
+    } else {
+      unsafeGrabFrames = 0;
+    }
 
     const firstSampleColumn = Math.floor(columns * 0.55);
     const columnSampleStep = Math.max(1, Math.floor(columns / 12));
@@ -1614,7 +1803,11 @@ function createClothSimulation(
     geometry.computeVertexNormals();
     positionAttribute.needsUpdate = true;
     geometry.getAttribute("normal").needsUpdate = true;
-    return { motion, impact } satisfies ClothAudioMetrics;
+    return {
+      motion,
+      impact,
+      releasedGrab,
+    } satisfies ClothStepMetrics;
   };
 
   const poke = (u: number, v: number, strength = 0.32) => {
@@ -1652,6 +1845,7 @@ function createClothSimulation(
     const radius = grabSettings.radius;
     const aspectCorrection = CLOTH_WIDTH / CLOTH_HEIGHT;
     const particles: NonNullable<typeof grabState>["particles"] = [];
+    grabInfluence.fill(0);
 
     for (let particle = 0; particle < vertexCount; particle += 1) {
       if (pinned[particle] === 1) continue;
@@ -1665,6 +1859,7 @@ function createClothSimulation(
       const weight =
         Math.cos(normalizedDistance * Math.PI * 0.5) ** 2;
       const particle3 = particle * 3;
+      grabInfluence[particle] = weight;
       particles.push({
         index: particle,
         offsetX: positions[particle3] - targetX,
@@ -1684,6 +1879,7 @@ function createClothSimulation(
       targetZ,
       particles,
     };
+    unsafeGrabFrames = 0;
     return true;
   };
 
@@ -1696,6 +1892,8 @@ function createClothSimulation(
 
   const releaseGrab = () => {
     grabState = null;
+    grabInfluence.fill(0);
+    unsafeGrabFrames = 0;
   };
 
   const setGrabSettings = (settings: GrabControls) => {
@@ -1819,7 +2017,7 @@ export function FlagStudio() {
   const [previousDesign, setPreviousDesign] = useState<string | null>(null);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [activeControlTab, setActiveControlTab] =
-    useState<ControlTab>("wind");
+    useState<ControlTab>("motion");
   const [meshQuality, setMeshQuality] = useState<MeshQuality>(
     INITIAL_MESH_QUALITY,
   );
@@ -2331,7 +2529,7 @@ export function FlagStudio() {
         clothSimulation.setGrabSettings(settings),
     };
     clothSimulation.setGrabSettings(grabSettingsRef.current);
-    const artworkCanvas = createDefaultArtwork();
+    const artworkCanvas = createEmptyArtwork();
     artworkCanvasRef.current = artworkCanvas;
     const artworkTexture = new THREE.CanvasTexture(artworkCanvas);
     artworkTexture.colorSpace = THREE.SRGBColorSpace;
@@ -2660,6 +2858,7 @@ export function FlagStudio() {
     let renderScale = 1;
     let lowFpsIntervals = 0;
     let highFpsIntervals = 0;
+    const drawingBufferSize = new THREE.Vector2();
 
     const resize = () => {
       const parent = canvas.parentElement;
@@ -2674,15 +2873,16 @@ export function FlagStudio() {
         Math.max(0.75, maximumPixelRatio * renderScale),
       );
       renderer.setSize(width, height, false);
-      renderer.getDrawingBufferSize(uniforms.uViewport.value);
+      renderer.getDrawingBufferSize(drawingBufferSize);
+      uniforms.uViewport.value.copy(drawingBufferSize);
       const backgroundScale = width < 780 ? 0.48 : 0.62;
       const backgroundWidth = Math.max(
         1,
-        Math.round(uniforms.uViewport.value.x * backgroundScale),
+        Math.round(drawingBufferSize.x * backgroundScale),
       );
       const backgroundHeight = Math.max(
         1,
-        Math.round(uniforms.uViewport.value.y * backgroundScale),
+        Math.round(drawingBufferSize.y * backgroundScale),
       );
       backgroundRenderTarget.setSize(
         backgroundWidth,
@@ -2790,6 +2990,7 @@ export function FlagStudio() {
       tapStart.x = event.clientX;
       tapStart.y = event.clientY;
       tapStart.grabbed = false;
+      delete canvas.dataset.autoReleased;
       const bounds = canvas.getBoundingClientRect();
       tapStart.screenX = THREE.MathUtils.clamp(
         (event.clientX - bounds.left) / Math.max(bounds.width, 1),
@@ -2922,10 +3123,27 @@ export function FlagStudio() {
           simulationTime,
           transitionGustRef.current,
         );
+        if (clothMetrics.releasedGrab && tapStart.grabbed) {
+          const releasedPointerId = tapStart.pointerId;
+          tapStart.pointerId = null;
+          tapStart.grabbed = false;
+          canvas.dataset.autoReleased = "collision";
+          canvas.classList.remove(
+            "is-grab-ready",
+            "is-grabbing",
+          );
+          if (
+            releasedPointerId !== null &&
+            canvas.hasPointerCapture(releasedPointerId)
+          ) {
+            canvas.releasePointerCapture(releasedPointerId);
+          }
+        }
         clothAudioRef.current = {
           motion: clothMetrics.motion,
           impact: Math.max(
             clothMetrics.impact,
+            clothMetrics.releasedGrab ? 0.82 : 0,
             clothAudioRef.current.impact * 0.92,
           ),
         };
@@ -4000,34 +4218,14 @@ export function FlagStudio() {
               } as React.CSSProperties
             }
           >
-            <svg
-              className="loader-logo"
-              viewBox="0 0 569 569"
-              aria-hidden="true"
-            >
-              <defs>
-                <path
-                  id="stage-loader-logo-path"
-                  pathLength="1"
-                  d="M284.5 0C325.369 0 358.5 33.1309 358.5 74V105.849L381.021 83.3281C409.919 54.4296 456.773 54.4294 485.672 83.3281C514.571 112.227 514.57 159.081 485.672 187.979L463.151 210.5H495C535.869 210.5 569 243.631 569 284.5C569 325.369 535.869 358.5 495 358.5H463.151L485.672 381.021C514.57 409.919 514.571 456.773 485.672 485.672C456.773 514.571 409.919 514.57 381.021 485.672L358.5 463.151V495C358.5 535.869 325.369 569 284.5 569C243.631 569 210.5 535.869 210.5 495V463.151L187.979 485.672C159.081 514.57 112.227 514.571 83.3281 485.672C54.4294 456.773 54.4295 409.919 83.3281 381.021L105.849 358.5H74C33.1309 358.5 1.16571e-05 325.369 0 284.5C1.78644e-06 243.631 33.1309 210.5 74 210.5H105.849L83.3281 187.979C54.4296 159.081 54.4294 112.227 83.3281 83.3281C112.227 54.4294 159.081 54.4295 187.979 83.3281L210.5 105.849V74C210.5 33.1309 243.631 0 284.5 0Z"
-                />
-              </defs>
-              <use
-                className="loader-logo-track"
-                href="#stage-loader-logo-path"
-              />
-              <use
-                className="loader-logo-progress"
-                href="#stage-loader-logo-path"
-              />
-            </svg>
+            <span className="loader-pulse" aria-hidden="true" />
             <span className="sr-only">Preparando la tela</span>
           </div>
         )}
         <canvas
           ref={canvasRef}
           className="flag-canvas"
-          aria-label="Bandera tridimensional animada por viento"
+          aria-label="Lienzo tridimensional interactivo"
         />
       </section>
 
@@ -4053,16 +4251,16 @@ export function FlagStudio() {
           aria-label="Grupos de controles"
         >
           <button
-            id="wind-tab"
+            id="motion-tab"
             type="button"
             role="tab"
-            aria-selected={activeControlTab === "wind"}
-            aria-controls="wind-panel"
-            className={activeControlTab === "wind" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("wind")}
+            aria-selected={activeControlTab === "motion"}
+            aria-controls="motion-panel"
+            className={activeControlTab === "motion" ? "is-active" : ""}
+            onClick={() => setActiveControlTab("motion")}
           >
             <span className="control-tab-icon" aria-hidden="true">≈</span>
-            <span className="sr-only">Viento</span>
+            <span className="sr-only">Movimiento</span>
           </button>
           <button
             id="sound-tab"
@@ -4141,11 +4339,11 @@ export function FlagStudio() {
         </div>
 
         <div
-          id="wind-panel"
+          id="motion-panel"
           className="control-group control-tab-panel"
           role="tabpanel"
-          aria-labelledby="wind-tab"
-          hidden={activeControlTab !== "wind"}
+          aria-labelledby="motion-tab"
+          hidden={activeControlTab !== "motion"}
         >
           <Control
             label="Tamaño de bandera"
@@ -4274,11 +4472,11 @@ export function FlagStudio() {
           hidden={activeControlTab !== "sound"}
         >
           <div className="sound-layer-section">
-            <div className="toggle-control wind-audio-control">
+            <div className="toggle-control ambient-audio-control">
               <div>
-                <span>Viento ambiental</span>
+                <span>Ambiente</span>
                 <small>
-                  Cuerpo, aire y ráfagas controlados por la fuerza del viento
+                  Cuerpo, aire y ráfagas que acompañan el movimiento
                 </small>
               </div>
               <button
@@ -4293,13 +4491,13 @@ export function FlagStudio() {
                 <span aria-hidden="true" />
                 <span className="sr-only">
                   {windSoundEnabled
-                    ? "Desactivar viento ambiental"
-                    : "Activar viento ambiental"}
+                    ? "Desactivar ambiente"
+                    : "Activar ambiente"}
                 </span>
               </button>
             </div>
             <Control
-              label="Volumen del viento"
+              label="Volumen del ambiente"
               value={windSound.volume}
               min={0}
               max={1}
@@ -4337,7 +4535,7 @@ export function FlagStudio() {
           </div>
 
           <div className="sound-layer-section">
-            <div className="toggle-control wind-audio-control">
+            <div className="toggle-control ambient-audio-control">
               <div>
                 <span>Tela y golpes</span>
                 <small>

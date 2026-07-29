@@ -505,38 +505,24 @@ button {
   animation: loader-appear 180ms ease both;
 }
 
-.loader-logo {
-  display: block;
-  width: 54px;
-  height: 54px;
-  overflow: visible;
+.loader-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--loader-color, var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--loader-color, var(--accent)) 48%, transparent);
+  animation: loader-pulse 1s ease-in-out infinite alternate;
 }
 
-.loader-logo-track,
-.loader-logo-progress {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
+@keyframes loader-pulse {
+  from {
+    opacity: 0.28;
+    transform: scale(0.72);
+  }
 
-.loader-logo-track {
-  stroke: rgba(255, 255, 255, 0.12);
-  stroke-width: 1.25px;
-}
-
-.loader-logo-progress {
-  stroke: var(--loader-color, var(--accent));
-  stroke-width: 1.8px;
-  stroke-dasharray: 0.18 0.82;
-  stroke-dashoffset: 0;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--loader-color, var(--accent)) 52%, transparent));
-  animation: loader-logo-trace 1.35s linear infinite;
-}
-
-@keyframes loader-logo-trace {
   to {
-    stroke-dashoffset: -1;
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
@@ -739,7 +725,7 @@ button {
   line-height: 1.5;
 }
 
-.wind-audio-control {
+.ambient-audio-control {
   padding: 0 0 18px;
 }
 
