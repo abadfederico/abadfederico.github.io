@@ -1142,6 +1142,7 @@ function createClothSimulation(
   const rowLength = columns + 1;
   const selfCollisionDistance = 0.06;
   const selfCollisionStiffness = 0.88;
+  const autoReleaseFrames = 20;
   const spatialHash = new Map<number, number[]>();
   const spatialBuckets: number[][] = [];
   const baseConstraintIterations =
@@ -1151,6 +1152,7 @@ function createClothSimulation(
   let lastFreeEdgeVelocity = 0;
   let lastMotionEnergy = 0;
   let unsafeGrabFrames = 0;
+  let autoReleaseFramesRemaining = 0;
   let grabSettings = { ...INITIAL_GRAB };
   let grabState: {
     targetX: number;
@@ -1228,6 +1230,7 @@ function createClothSimulation(
     lastFreeEdgeVelocity = 0;
     lastMotionEnergy = 0;
     unsafeGrabFrames = 0;
+    autoReleaseFramesRemaining = 0;
 
     for (let row = 0; row <= rows; row += 1) {
       for (let column = 1; column <= columns; column += 1) {
@@ -1484,6 +1487,10 @@ function createClothSimulation(
   const applyGrabConstraint = () => {
     if (!grabState) return 0;
     let maximumGrabStress = 0;
+    const releaseStrength =
+      autoReleaseFramesRemaining > 0
+        ? autoReleaseFramesRemaining / (autoReleaseFrames + 1)
+        : 1;
 
     for (const grabbed of grabState.particles) {
       if (pinned[grabbed.index] === 1) continue;
@@ -1497,7 +1504,9 @@ function createClothSimulation(
         grabSettings.resistance,
       );
       const influence =
-        grabResponse * (0.18 + grabbed.weight * 0.82);
+        grabResponse *
+        (0.18 + grabbed.weight * 0.82) *
+        releaseStrength;
       const correctionX =
         (targetX - positions[particle3]) * influence;
       const correctionY =
@@ -1708,7 +1717,7 @@ function createClothSimulation(
     }
 
     let releasedGrab = false;
-    if (grabState) {
+    if (grabState && autoReleaseFramesRemaining === 0) {
       const grabbedParticleCount = grabState.particles.length;
       const collisionOverloadThreshold = Math.max(
         10,
@@ -1747,13 +1756,50 @@ function createClothSimulation(
         : Math.max(unsafeGrabFrames - 1, 0);
 
       if (catastrophicPenetration || unsafeGrabFrames >= 2) {
-        grabState = null;
-        grabInfluence.fill(0);
+        autoReleaseFramesRemaining = autoReleaseFrames;
+        for (let particle = 0; particle < vertexCount; particle += 1) {
+          if (pinned[particle] === 1) continue;
+          const particle3 = particle * 3;
+          const velocityRetention = THREE.MathUtils.lerp(
+            0.48,
+            0.12,
+            grabInfluence[particle],
+          );
+          previousPositions[particle3] =
+            positions[particle3] -
+            (
+              positions[particle3] -
+              previousPositions[particle3]
+            ) *
+              velocityRetention;
+          previousPositions[particle3 + 1] =
+            positions[particle3 + 1] -
+            (
+              positions[particle3 + 1] -
+              previousPositions[particle3 + 1]
+            ) *
+              velocityRetention;
+          previousPositions[particle3 + 2] =
+            positions[particle3 + 2] -
+            (
+              positions[particle3 + 2] -
+              previousPositions[particle3 + 2]
+            ) *
+              velocityRetention;
+        }
         unsafeGrabFrames = 0;
         releasedGrab = true;
       }
-    } else {
+    } else if (!grabState) {
       unsafeGrabFrames = 0;
+    }
+
+    if (autoReleaseFramesRemaining > 0) {
+      autoReleaseFramesRemaining -= 1;
+      if (autoReleaseFramesRemaining === 0) {
+        grabState = null;
+        grabInfluence.fill(0);
+      }
     }
 
     const firstSampleColumn = Math.floor(columns * 0.55);
@@ -1880,6 +1926,7 @@ function createClothSimulation(
       particles,
     };
     unsafeGrabFrames = 0;
+    autoReleaseFramesRemaining = 0;
     return true;
   };
 
@@ -1894,6 +1941,7 @@ function createClothSimulation(
     grabState = null;
     grabInfluence.fill(0);
     unsafeGrabFrames = 0;
+    autoReleaseFramesRemaining = 0;
   };
 
   const setGrabSettings = (settings: GrabControls) => {
@@ -3143,7 +3191,7 @@ export function FlagStudio() {
           motion: clothMetrics.motion,
           impact: Math.max(
             clothMetrics.impact,
-            clothMetrics.releasedGrab ? 0.82 : 0,
+            clothMetrics.releasedGrab ? 0.36 : 0,
             clothAudioRef.current.impact * 0.92,
           ),
         };
