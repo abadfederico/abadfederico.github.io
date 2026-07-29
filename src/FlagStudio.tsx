@@ -1,5 +1,12 @@
 import { ChangeEvent, useEffect, useId, useRef, useState } from "react";
 import * as THREE from "three";
+import {
+  CUSTOM_BACKGROUND_PALETTE,
+  proceduralBackgroundCompositeFragmentShader,
+  proceduralBackgroundFragmentShader,
+  proceduralBackgroundVertexShader,
+  type ProceduralBackgroundPalette,
+} from "./proceduralBackground";
 
 type WindControls = {
   strength: number;
@@ -108,7 +115,13 @@ type DesignPreset = {
   color: string;
   asset: string;
   identityBackground: string;
+  background: ProceduralBackgroundPalette;
 };
+
+type BackgroundControls = Pick<
+  ProceduralBackgroundPalette,
+  "intensity" | "speed" | "warp"
+>;
 
 type ControlTab =
   | "wind"
@@ -116,6 +129,7 @@ type ControlTab =
   | "grab"
   | "material"
   | "lighting"
+  | "background"
   | "artwork";
 type MeshQuality = 1 | 2 | 3 | 4;
 type TransitionMode = "logo" | "touch" | "weave" | "tear";
@@ -192,6 +206,14 @@ const INITIAL_LIGHTING: LightingControls = {
   premiereSpeed: 1,
 };
 
+const getBackgroundControls = (
+  palette: ProceduralBackgroundPalette,
+): BackgroundControls => ({
+  intensity: palette.intensity,
+  speed: palette.speed,
+  warp: palette.warp,
+});
+
 const DESIGN_PRESETS: DesignPreset[] = [
   {
     id: "brubank",
@@ -199,6 +221,14 @@ const DESIGN_PRESETS: DesignPreset[] = [
     color: "#614AD9",
     asset: "/flags/brubank.png",
     identityBackground: "#100B21",
+    background: {
+      edge: "#100B21",
+      colors: ["#2B1765", "#614AD9", "#A18BFF"],
+      seed: 2.15,
+      speed: 0.42,
+      warp: 0.2,
+      intensity: 0.08,
+    },
   },
   {
     id: "xapo",
@@ -206,6 +236,14 @@ const DESIGN_PRESETS: DesignPreset[] = [
     color: "#FFFFFF",
     asset: "/flags/xapo.png",
     identityBackground: "#17130F",
+    background: {
+      edge: "#17130F",
+      colors: ["#3B2618", "#E95820", "#E8D7BC"],
+      seed: 4.7,
+      speed: 0.3,
+      warp: 0.14,
+      intensity: 0.06,
+    },
   },
   {
     id: "popcorn",
@@ -213,6 +251,14 @@ const DESIGN_PRESETS: DesignPreset[] = [
     color: "#EF0000",
     asset: "/flags/popcorn.png",
     identityBackground: "#170607",
+    background: {
+      edge: "#170607",
+      colors: ["#52090B", "#EF0000", "#FFB05C"],
+      seed: 6.35,
+      speed: 0.58,
+      warp: 0.23,
+      intensity: 0.07,
+    },
   },
   {
     id: "ba",
@@ -220,6 +266,14 @@ const DESIGN_PRESETS: DesignPreset[] = [
     color: "#FED501",
     asset: "/flags/ba.png",
     identityBackground: "#171404",
+    background: {
+      edge: "#171404",
+      colors: ["#453A04", "#CDAE00", "#FFF1A3"],
+      seed: 9.2,
+      speed: 0.27,
+      warp: 0.12,
+      intensity: 0.06,
+    },
   },
   {
     id: "taringa",
@@ -227,6 +281,14 @@ const DESIGN_PRESETS: DesignPreset[] = [
     color: "#005DAB",
     asset: "/flags/taringa.png",
     identityBackground: "#05111D",
+    background: {
+      edge: "#05111D",
+      colors: ["#073B64", "#005DAB", "#2495FF"],
+      seed: 12.8,
+      speed: 0.38,
+      warp: 0.19,
+      intensity: 0.07,
+    },
   },
 ];
 
@@ -1681,6 +1743,23 @@ export function FlagStudio() {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const uniformsRef = useRef<Record<string, THREE.IUniform> | null>(null);
   const designTransitionRef = useRef<DesignTransition>(() => undefined);
+  const backgroundTransitionRef = useRef<
+    (palette: ProceduralBackgroundPalette) => void
+  >(() => undefined);
+  const backgroundParametersRef = useRef<
+    (controls: BackgroundControls) => void
+  >(() => undefined);
+  const backgroundSettingsByDesignRef = useRef<
+    Record<string, BackgroundControls>
+  >({
+    ...Object.fromEntries(
+      DESIGN_PRESETS.map((design) => [
+        design.id,
+        getBackgroundControls(design.background),
+      ]),
+    ),
+    custom: getBackgroundControls(CUSTOM_BACKGROUND_PALETTE),
+  });
   const advanceDesignRef = useRef<
     (origin?: TransitionOrigin) => void
   >(() => undefined);
@@ -1729,6 +1808,10 @@ export function FlagStudio() {
   const [materialSettings, setMaterialSettings] = useState(INITIAL_MATERIAL);
   const [grabSettings, setGrabSettings] = useState(INITIAL_GRAB);
   const [lighting, setLighting] = useState(INITIAL_LIGHTING);
+  const [backgroundSettings, setBackgroundSettings] =
+    useState<BackgroundControls>(
+      getBackgroundControls(INITIAL_DESIGN.background),
+    );
   const [color, setColor] = useState(INITIAL_DESIGN.color);
   const [activeDesign, setActiveDesign] = useState<string | null>(
     INITIAL_DESIGN.id,
@@ -1768,6 +1851,17 @@ export function FlagStudio() {
       backgroundColor,
     );
     themeColor?.setAttribute("content", backgroundColor);
+    const palette =
+      activePreset?.background ?? CUSTOM_BACKGROUND_PALETTE;
+    const settingsKey = activePreset?.id ?? "custom";
+    const storedSettings =
+      backgroundSettingsByDesignRef.current[settingsKey] ??
+      getBackgroundControls(palette);
+    setBackgroundSettings({ ...storedSettings });
+    backgroundTransitionRef.current({
+      ...palette,
+      ...storedSettings,
+    });
   }, [activeDesign]);
 
   useEffect(() => {
@@ -1973,6 +2067,206 @@ export function FlagStudio() {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
     camera.position.set(0.15, 0, 6.6);
+    const initialBackgroundPalette =
+      DESIGN_PRESETS.find(
+        (design) => design.id === settings.activeDesign,
+      )?.background ?? CUSTOM_BACKGROUND_PALETTE;
+    const initialBackgroundKey = settings.activeDesign ?? "custom";
+    const initialBackground = {
+      ...initialBackgroundPalette,
+      ...(
+        backgroundSettingsByDesignRef.current[
+          initialBackgroundKey
+        ] ?? getBackgroundControls(initialBackgroundPalette)
+      ),
+    };
+    const backgroundUniforms: Record<string, THREE.IUniform> = {
+      uBackgroundResolution: { value: new THREE.Vector2(1, 1) },
+      uBackgroundPointer: { value: new THREE.Vector2() },
+      uBackgroundTime: { value: 0 },
+      uBackgroundMotion: { value: prefersReducedMotion ? 0 : 1 },
+      uBackgroundMix: { value: 1 },
+      uBackgroundFromEdge: {
+        value: new THREE.Color(initialBackground.edge),
+      },
+      uBackgroundFromA: {
+        value: new THREE.Color(initialBackground.colors[0]),
+      },
+      uBackgroundFromB: {
+        value: new THREE.Color(initialBackground.colors[1]),
+      },
+      uBackgroundFromC: {
+        value: new THREE.Color(initialBackground.colors[2]),
+      },
+      uBackgroundFromParams: {
+        value: new THREE.Vector4(
+          initialBackground.speed,
+          initialBackground.seed,
+          initialBackground.warp,
+          initialBackground.intensity,
+        ),
+      },
+      uBackgroundToEdge: {
+        value: new THREE.Color(initialBackground.edge),
+      },
+      uBackgroundToA: {
+        value: new THREE.Color(initialBackground.colors[0]),
+      },
+      uBackgroundToB: {
+        value: new THREE.Color(initialBackground.colors[1]),
+      },
+      uBackgroundToC: {
+        value: new THREE.Color(initialBackground.colors[2]),
+      },
+      uBackgroundToParams: {
+        value: new THREE.Vector4(
+          initialBackground.speed,
+          initialBackground.seed,
+          initialBackground.warp,
+          initialBackground.intensity,
+        ),
+      },
+    };
+    const backgroundScene = new THREE.Scene();
+    const backgroundCamera = new THREE.OrthographicCamera(
+      -1,
+      1,
+      1,
+      -1,
+      0,
+      1,
+    );
+    const backgroundGeometry = new THREE.PlaneGeometry(2, 2);
+    const backgroundMaterial = new THREE.ShaderMaterial({
+      uniforms: backgroundUniforms,
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: proceduralBackgroundFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const backgroundMesh = new THREE.Mesh(
+      backgroundGeometry,
+      backgroundMaterial,
+    );
+    backgroundMesh.frustumCulled = false;
+    backgroundScene.add(backgroundMesh);
+    const backgroundRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    backgroundRenderTarget.texture.generateMipmaps = false;
+    const backgroundCompositeScene = new THREE.Scene();
+    const backgroundCompositeGeometry = new THREE.PlaneGeometry(2, 2);
+    const backgroundCompositeMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uBackgroundTexture: {
+          value: backgroundRenderTarget.texture,
+        },
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: proceduralBackgroundCompositeFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const backgroundCompositeMesh = new THREE.Mesh(
+      backgroundCompositeGeometry,
+      backgroundCompositeMaterial,
+    );
+    backgroundCompositeMesh.frustumCulled = false;
+    backgroundCompositeScene.add(backgroundCompositeMesh);
+    renderer.autoClear = false;
+
+    const backgroundColorKeys = ["Edge", "A", "B", "C"] as const;
+    let backgroundTransitionFrame = 0;
+    let backgroundRenderFrame = 0;
+    let backgroundNeedsRender = true;
+    backgroundTransitionRef.current = (nextPalette) => {
+      window.cancelAnimationFrame(backgroundTransitionFrame);
+      const currentMix = THREE.MathUtils.clamp(
+        backgroundUniforms.uBackgroundMix.value,
+        0,
+        1,
+      );
+
+      for (const key of backgroundColorKeys) {
+        const fromColor = backgroundUniforms[
+          `uBackgroundFrom${key}`
+        ].value as THREE.Color;
+        const toColor = backgroundUniforms[
+          `uBackgroundTo${key}`
+        ].value as THREE.Color;
+        fromColor.lerp(toColor, currentMix);
+      }
+      (
+        backgroundUniforms.uBackgroundFromParams
+          .value as THREE.Vector4
+      ).lerp(
+        backgroundUniforms.uBackgroundToParams
+          .value as THREE.Vector4,
+        currentMix,
+      );
+
+      (
+        backgroundUniforms.uBackgroundToEdge.value as THREE.Color
+      ).set(nextPalette.edge);
+      (
+        backgroundUniforms.uBackgroundToA.value as THREE.Color
+      ).set(nextPalette.colors[0]);
+      (
+        backgroundUniforms.uBackgroundToB.value as THREE.Color
+      ).set(nextPalette.colors[1]);
+      (
+        backgroundUniforms.uBackgroundToC.value as THREE.Color
+      ).set(nextPalette.colors[2]);
+      (
+        backgroundUniforms.uBackgroundToParams.value as THREE.Vector4
+      ).set(
+        nextPalette.speed,
+        nextPalette.seed,
+        nextPalette.warp,
+        nextPalette.intensity,
+      );
+
+      if (prefersReducedMotion) {
+        backgroundUniforms.uBackgroundMix.value = 1;
+        return;
+      }
+
+      backgroundUniforms.uBackgroundMix.value = 0;
+      const startedAt = performance.now();
+      const duration = 1080;
+      const animateBackgroundTransition = (now: number) => {
+        const progress = THREE.MathUtils.clamp(
+          (now - startedAt) / duration,
+          0,
+          1,
+        );
+        backgroundUniforms.uBackgroundMix.value =
+          1 - Math.pow(1 - progress, 3);
+        if (progress < 1) {
+          backgroundTransitionFrame = window.requestAnimationFrame(
+            animateBackgroundTransition,
+          );
+        }
+      };
+      backgroundTransitionFrame = window.requestAnimationFrame(
+        animateBackgroundTransition,
+      );
+    };
+    backgroundParametersRef.current = (controls) => {
+      const targetParams =
+        backgroundUniforms.uBackgroundToParams
+          .value as THREE.Vector4;
+      targetParams.x = controls.speed;
+      targetParams.z = controls.warp;
+      targetParams.w = controls.intensity;
+      backgroundNeedsRender = true;
+    };
+
     const { columns, rows } = MESH_RESOLUTIONS[meshQuality];
 
     const geometry = new THREE.PlaneGeometry(
@@ -2356,6 +2650,26 @@ export function FlagStudio() {
       );
       renderer.setSize(width, height, false);
       renderer.getDrawingBufferSize(uniforms.uViewport.value);
+      const backgroundScale = width < 780 ? 0.48 : 0.62;
+      const backgroundWidth = Math.max(
+        1,
+        Math.round(uniforms.uViewport.value.x * backgroundScale),
+      );
+      const backgroundHeight = Math.max(
+        1,
+        Math.round(uniforms.uViewport.value.y * backgroundScale),
+      );
+      backgroundRenderTarget.setSize(
+        backgroundWidth,
+        backgroundHeight,
+      );
+      (
+        backgroundUniforms.uBackgroundResolution
+          .value as THREE.Vector2
+      ).set(backgroundWidth, backgroundHeight);
+      backgroundNeedsRender = true;
+      backgroundUniforms.uBackgroundMotion.value =
+        prefersReducedMotion ? 0 : width < 780 ? 0.62 : 1;
       camera.aspect = width / Math.max(height, 1);
       const verticalFov = THREE.MathUtils.degToRad(camera.fov);
       const portraitFitDistance =
@@ -2598,6 +2912,28 @@ export function FlagStudio() {
       pointer.lerp(pointerTarget, 0.045);
       flag.rotation.y = THREE.MathUtils.lerp(flag.rotation.y, -0.12 + pointer.x * 0.08, 0.04);
       flag.rotation.x = THREE.MathUtils.lerp(flag.rotation.x, -0.025 - pointer.y * 0.045, 0.04);
+      backgroundUniforms.uBackgroundTime.value =
+        uniforms.uTime.value;
+      (
+        backgroundUniforms.uBackgroundPointer.value as THREE.Vector2
+      ).copy(pointer);
+      backgroundRenderFrame += 1;
+      if (
+        backgroundNeedsRender ||
+        backgroundRenderFrame % 2 === 0
+      ) {
+        renderer.setRenderTarget(backgroundRenderTarget);
+        renderer.clear(true, true, true);
+        renderer.render(backgroundScene, backgroundCamera);
+        renderer.setRenderTarget(null);
+        backgroundNeedsRender = false;
+      }
+      renderer.clear(true, true, true);
+      renderer.render(
+        backgroundCompositeScene,
+        backgroundCamera,
+      );
+      renderer.clearDepth();
       renderer.render(scene, camera);
       if (!hasRendered) {
         hasRendered = true;
@@ -2621,6 +2957,7 @@ export function FlagStudio() {
       disposed = true;
       window.cancelAnimationFrame(animationFrame);
       window.cancelAnimationFrame(designTransitionFrame);
+      window.cancelAnimationFrame(backgroundTransitionFrame);
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       canvas.removeEventListener("pointermove", handlePointer);
@@ -2639,6 +2976,11 @@ export function FlagStudio() {
       frontMaterial.dispose();
       backMaterial.dispose();
       edgeMaterial.dispose();
+      backgroundGeometry.dispose();
+      backgroundMaterial.dispose();
+      backgroundCompositeGeometry.dispose();
+      backgroundCompositeMaterial.dispose();
+      backgroundRenderTarget.dispose();
       artworkTexture.dispose();
       previousArtworkTexture.dispose();
       renderer.dispose();
@@ -2647,6 +2989,8 @@ export function FlagStudio() {
       uniformsRef.current = null;
       textureRef.current = null;
       designTransitionRef.current = () => undefined;
+      backgroundTransitionRef.current = () => undefined;
+      backgroundParametersRef.current = () => undefined;
       transitionGustRef.current = 0;
       clothPokeRef.current = () => undefined;
       clothGrabRef.current = {
@@ -2779,6 +3123,21 @@ export function FlagStudio() {
         [key]: value,
       }));
     };
+
+  const updateBackground = (
+    key: keyof BackgroundControls,
+    value: number,
+  ) => {
+    const nextSettings = {
+      ...backgroundSettings,
+      [key]: value,
+    };
+    const settingsKey = activeDesign ?? "custom";
+    backgroundSettingsByDesignRef.current[settingsKey] =
+      nextSettings;
+    backgroundParametersRef.current(nextSettings);
+    setBackgroundSettings(nextSettings);
+  };
 
   const updateLighting =
     (key: Exclude<keyof LightingControls, "color">) =>
@@ -3439,6 +3798,13 @@ export function FlagStudio() {
     setMaterialSettings(INITIAL_MATERIAL);
     setGrabSettings(INITIAL_GRAB);
     setLighting(INITIAL_LIGHTING);
+    const initialBackgroundSettings = getBackgroundControls(
+      selectedDesign.background,
+    );
+    backgroundSettingsByDesignRef.current[selectedDesign.id] =
+      initialBackgroundSettings;
+    setBackgroundSettings(initialBackgroundSettings);
+    backgroundParametersRef.current(initialBackgroundSettings);
     windSoundRef.current = INITIAL_WIND_SOUND;
     setWindSound(INITIAL_WIND_SOUND);
     setMeshQuality(INITIAL_MESH_QUALITY);
@@ -3598,21 +3964,6 @@ export function FlagStudio() {
         className={`stage stage-${activeDesign ?? "custom"}`}
         aria-label="Abad * Human"
       >
-        {previousDesign && (
-          <div
-            key={`previous-${previousDesign}-${activeDesign ?? "custom"}`}
-            className={`stage-theme stage-${previousDesign} is-exiting`}
-            aria-hidden="true"
-          />
-        )}
-        <div
-          key={`current-${activeDesign ?? "custom"}`}
-          className={`stage-theme stage-${
-            activeDesign ?? "custom"
-          } ${previousDesign ? "is-entering" : ""}`}
-          aria-hidden="true"
-        />
-        <div className="stage-glow" aria-hidden="true" />
         {(isLoading || loadingPreview) && (
           <div
             className="stage-loader"
@@ -3735,6 +4086,20 @@ export function FlagStudio() {
           >
             <span className="control-tab-icon" aria-hidden="true">☼</span>
             <span className="sr-only">Luz</span>
+          </button>
+          <button
+            id="background-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeControlTab === "background"}
+            aria-controls="background-panel"
+            className={
+              activeControlTab === "background" ? "is-active" : ""
+            }
+            onClick={() => setActiveControlTab("background")}
+          >
+            <span className="control-tab-icon" aria-hidden="true">◌</span>
+            <span className="sr-only">Fondo</span>
           </button>
           <button
             id="artwork-tab"
@@ -4325,6 +4690,50 @@ export function FlagStudio() {
               />
             </label>
           </div>
+        </div>
+
+        <div
+          id="background-panel"
+          className="control-group control-tab-panel"
+          role="tabpanel"
+          aria-labelledby="background-tab"
+          hidden={activeControlTab !== "background"}
+        >
+          <p className="grab-control-hint">
+            Ajustes del mesh procedural para el diseño activo. Cada
+            diseño conserva sus propios valores durante la sesión.
+          </p>
+          <Control
+            label="Intensidad"
+            value={backgroundSettings.intensity}
+            min={0.03}
+            max={0.1}
+            step={0.01}
+            display={`${Math.round(
+              backgroundSettings.intensity * 100,
+            )}%`}
+            onChange={(value) =>
+              updateBackground("intensity", value)
+            }
+          />
+          <Control
+            label="Velocidad"
+            value={backgroundSettings.speed}
+            min={0}
+            max={1.5}
+            step={0.01}
+            display={`${backgroundSettings.speed.toFixed(2)}×`}
+            onChange={(value) => updateBackground("speed", value)}
+          />
+          <Control
+            label="Deformación"
+            value={backgroundSettings.warp}
+            min={0}
+            max={0.6}
+            step={0.01}
+            display={`${backgroundSettings.warp.toFixed(2)}×`}
+            onChange={(value) => updateBackground("warp", value)}
+          />
         </div>
 
         <div
