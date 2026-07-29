@@ -1973,12 +1973,14 @@ export function FlagStudio() {
     let currentY = 0;
     let targetX = 0;
     let targetY = 0;
+    let inactivityTimer = 0;
 
     const animateLook = () => {
       currentX += (targetX - currentX) * 0.16;
       currentY += (targetY - currentY) * 0.16;
       character.style.setProperty("--eye-x", `${currentX * 2.4}px`);
-      character.style.setProperty("--eye-y", `${currentY * 1.7}px`);
+      const eyeYRange = currentY < 0 ? 2.35 : 1.7;
+      character.style.setProperty("--eye-y", `${currentY * eyeYRange}px`);
 
       if (
         Math.abs(targetX - currentX) > 0.002 ||
@@ -1996,26 +1998,48 @@ export function FlagStudio() {
       }
     };
 
-    const handleIdentityPointer = (event: PointerEvent) => {
-      targetX = THREE.MathUtils.clamp(
-        (event.clientX / Math.max(window.innerWidth, 1) - 0.5) * 2,
-        -1,
-        1,
+    const lookAtPointer = (pointerX: number, pointerY: number) => {
+      const activeIdentity = character.querySelector<HTMLElement>(
+        ".identity-character-selected",
       );
-      targetY = THREE.MathUtils.clamp(
-        (event.clientY / Math.max(window.innerHeight, 1) - 0.5) * 2,
-        -1,
-        1,
-      );
+      const bounds = (activeIdentity ?? character).getBoundingClientRect();
+      const pointerIsAbove = pointerY < bounds.top;
+      const deltaX = pointerX - (bounds.left + bounds.width / 2);
+      const deltaY = pointerY - (bounds.top + bounds.height / 2);
+      const distance = Math.hypot(deltaX, deltaY);
+
+      if (distance < 4) {
+        targetX = 0;
+        targetY = 0;
+      } else {
+        targetX = deltaX / distance;
+        targetY = pointerIsAbove ? -1 : deltaY / distance;
+      }
       requestLookUpdate();
     };
 
+    const scheduleInterestLoss = () => {
+      window.clearTimeout(inactivityTimer);
+      inactivityTimer = window.setTimeout(() => {
+        targetX = Math.random() < 0.5 ? -0.38 : 0.38;
+        targetY = 0.12;
+        requestLookUpdate();
+      }, 1000);
+    };
+
+    const handleIdentityPointer = (event: PointerEvent) => {
+      lookAtPointer(event.clientX, event.clientY);
+      scheduleInterestLoss();
+    };
+
     const resetIdentityLook = () => {
+      window.clearTimeout(inactivityTimer);
       targetX = 0;
       targetY = 0;
       requestLookUpdate();
     };
 
+    scheduleInterestLoss();
     window.addEventListener("pointermove", handleIdentityPointer, {
       passive: true,
     });
@@ -2027,6 +2051,7 @@ export function FlagStudio() {
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(inactivityTimer);
       window.removeEventListener("pointermove", handleIdentityPointer);
       window.removeEventListener("blur", resetIdentityLook);
       document.documentElement.removeEventListener(
