@@ -1969,6 +1969,12 @@ export function FlagStudio() {
   const designSwitcherRef = useRef<HTMLElement>(null);
   const identityMotionRef = useRef<HTMLDivElement>(null);
   const navigationPressAnimationRef = useRef<Animation | null>(null);
+  const identityTapAnimationsRef = useRef<Animation[]>([]);
+  const identityTapTimerRef = useRef<number | null>(null);
+  const identityTapStreakRef = useRef({
+    count: 0,
+    lastTap: 0,
+  });
   const navigationDragRef = useRef({
     pointerId: null as number | null,
     startX: 0,
@@ -2141,6 +2147,13 @@ export function FlagStudio() {
     return () => {
       navigationPressAnimationRef.current?.cancel();
       navigationPressAnimationRef.current = null;
+      for (const animation of identityTapAnimationsRef.current) {
+        animation.cancel();
+      }
+      identityTapAnimationsRef.current = [];
+      if (identityTapTimerRef.current !== null) {
+        window.clearTimeout(identityTapTimerRef.current);
+      }
       if (previousDesignTimerRef.current !== null) {
         window.clearTimeout(previousDesignTimerRef.current);
       }
@@ -3866,6 +3879,183 @@ export function FlagStudio() {
     };
   };
 
+  const animateSelectedIdentityTap = (tapTime: number) => {
+    const switcher = designSwitcherRef.current;
+    const character = switcher?.querySelector<HTMLElement>(
+      ".design-tab.is-active .identity-character-selected",
+    );
+    if (
+      !switcher ||
+      !character ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+
+    const previousStreak = identityTapStreakRef.current;
+    const count =
+      tapTime - previousStreak.lastTap < 720
+        ? Math.min(previousStreak.count + 1, 5)
+        : 1;
+    identityTapStreakRef.current = {
+      count,
+      lastTap: tapTime,
+    };
+
+    for (const animation of identityTapAnimationsRef.current) {
+      animation.cancel();
+    }
+
+    const feelsHit = count >= 3;
+    const direction = count % 2 === 0 ? 1 : -1;
+    const hitDistance = 3.5 + (count - 3) * 1.1;
+    const hitRotation = 6 + (count - 3) * 1.4;
+    const characterAnimation = character.animate(
+      feelsHit
+        ? [
+            {
+              transform:
+                "translate(-50%, -50%) rotate(0deg) scale(1)",
+              offset: 0,
+            },
+            {
+              transform: `translate(calc(-50% + ${direction * 1.4}px), -48%) rotate(${direction * 2}deg) scale(0.97, 1.03)`,
+              offset: 0.14,
+            },
+            {
+              transform: `translate(calc(-50% + ${direction * hitDistance}px), -50%) rotate(${direction * hitRotation}deg) scale(0.9, 1.07)`,
+              offset: 0.3,
+            },
+            {
+              transform: `translate(calc(-50% - ${direction * 1.4}px), -50%) rotate(${-direction * 2.6}deg) scale(1.035, 0.975)`,
+              offset: 0.58,
+            },
+            {
+              transform: `translate(calc(-50% + ${direction * 0.45}px), -50%) rotate(${direction * 0.8}deg) scale(0.99, 1.01)`,
+              offset: 0.8,
+            },
+            {
+              transform:
+                "translate(-50%, -50%) rotate(0deg) scale(1)",
+              offset: 1,
+            },
+          ]
+        : [
+            {
+              transform:
+                "translate(-50%, -50%) rotate(0deg) scale(1)",
+              offset: 0,
+            },
+            {
+              transform: `translate(calc(-50% + ${direction * 0.8}px), -62%) rotate(${direction * 3.4}deg) scale(0.96, 1.065)`,
+              offset: 0.3,
+            },
+            {
+              transform: `translate(calc(-50% - ${direction * 0.45}px), -48%) rotate(${-direction * 2.2}deg) scale(1.045, 0.955)`,
+              offset: 0.58,
+            },
+            {
+              transform: `translate(-50%, -52%) rotate(${direction * 0.7}deg) scale(0.99, 1.015)`,
+              offset: 0.78,
+            },
+            {
+              transform:
+                "translate(-50%, -50%) rotate(0deg) scale(1)",
+              offset: 1,
+            },
+          ],
+      {
+        duration: feelsHit ? 430 : 560,
+        easing: "linear",
+      },
+    );
+
+    const eyeAnimations = Array.from(
+      character.querySelectorAll<HTMLElement>(".identity-eyes > span"),
+    ).map((eye, eyeIndex) => {
+      const isWinkingEye =
+        count === 2 && eyeIndex === (direction > 0 ? 0 : 1);
+      return eye.animate(
+        feelsHit
+          ? [
+              {
+                transform: "translateX(0) scale(1)",
+                offset: 0,
+              },
+              {
+                transform: `translateX(${-direction * 0.3}px) scale(1.12, 0.76)`,
+                offset: 0.12,
+              },
+              {
+                transform: `translateX(${-direction * 0.8}px) scale(1.62, 0.12)`,
+                offset: 0.24,
+              },
+              {
+                transform: `translateX(${-direction * 0.65}px) scale(1.5, 0.14)`,
+                offset: 0.54,
+              },
+              {
+                transform: "translateY(-0.45px) scale(1.2, 1.34)",
+                offset: 0.74,
+              },
+              {
+                transform: "translateX(0) scale(1)",
+                offset: 1,
+              },
+            ]
+          : [
+              {
+                transform: "translateY(0) scale(1)",
+                offset: 0,
+              },
+              {
+                transform: "translateY(0.25px) scale(0.84)",
+                offset: 0.16,
+              },
+              {
+                transform: isWinkingEye
+                  ? "translateY(0.35px) scale(1.5, 0.12)"
+                  : "translateY(-0.9px) scale(1.78)",
+                offset: 0.34,
+              },
+              {
+                transform: isWinkingEye
+                  ? "translateY(0.2px) scale(1.34, 0.18)"
+                  : "translateY(-0.35px) scale(1.34)",
+                offset: 0.58,
+              },
+              {
+                transform: "translateY(0) scale(0.94, 1.12)",
+                offset: 0.78,
+              },
+              {
+                transform: "translateY(0) scale(1)",
+                offset: 1,
+              },
+            ],
+        {
+          duration: feelsHit ? 430 : 520,
+          easing: "linear",
+        },
+      );
+    });
+
+    identityTapAnimationsRef.current = [
+      characterAnimation,
+      ...eyeAnimations,
+    ];
+    switcher.dataset.identityReaction = feelsHit ? "hit" : "play";
+    switcher.dataset.identityTapStreak = String(count);
+    if (identityTapTimerRef.current !== null) {
+      window.clearTimeout(identityTapTimerRef.current);
+    }
+    identityTapTimerRef.current = window.setTimeout(() => {
+      delete switcher.dataset.identityReaction;
+      delete switcher.dataset.identityTapStreak;
+      identityTapTimerRef.current = null;
+    }, feelsHit ? 430 : 560);
+  };
+
   const applyDesign = (
     design: DesignPreset,
     transitionOrigin: TransitionOrigin = DEFAULT_TRANSITION_ORIGIN,
@@ -4060,7 +4250,13 @@ export function FlagStudio() {
       const design = DESIGN_PRESETS.find(
         (preset) => preset.id === tappedDesignId,
       );
-      if (design) applyDesign(design);
+      if (design) {
+        if (design.id === activeDesignRef.current) {
+          animateSelectedIdentityTap(event.timeStamp);
+        } else {
+          applyDesign(design);
+        }
+      }
     }
 
     stopNavigationDrag(drag.dragged || Boolean(tappedDesignId));
@@ -4214,7 +4410,13 @@ export function FlagStudio() {
                         : ""
                   }`}
                   type="button"
-                  onClick={() => applyDesign(design)}
+                  onClick={(event) => {
+                    if (design.id === activeDesignRef.current) {
+                      animateSelectedIdentityTap(event.timeStamp);
+                    } else {
+                      applyDesign(design);
+                    }
+                  }}
                   aria-label={design.label}
                   aria-pressed={isActive}
                   data-design-id={design.id}
