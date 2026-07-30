@@ -137,6 +137,15 @@ type ControlTab =
   | "artwork";
 type MeshQuality = 1 | 2 | 3 | 4;
 type TransitionMode = "logo" | "touch" | "weave" | "tear";
+type ClothAnchor = "left" | "top";
+
+type ClothLayout = {
+  width: number;
+  height: number;
+  textureWidth: number;
+  textureHeight: number;
+  anchor: ClothAnchor;
+};
 
 const INITIAL_WIND: WindControls = {
   strength: 3.77,
@@ -170,6 +179,25 @@ const MESH_RESOLUTIONS: Record<
   3: { columns: 96, rows: 56 },
   4: { columns: 112, rows: 64 },
 };
+
+const LANDSCAPE_CLOTH: ClothLayout = {
+  width: 3.35,
+  height: 1.9,
+  textureWidth: 1024,
+  textureHeight: 576,
+  anchor: "left",
+};
+
+const PORTRAIT_CLOTH: ClothLayout = {
+  width: LANDSCAPE_CLOTH.height,
+  height: LANDSCAPE_CLOTH.width,
+  textureWidth: LANDSCAPE_CLOTH.textureHeight,
+  textureHeight: LANDSCAPE_CLOTH.textureWidth,
+  anchor: "top",
+};
+
+const MOBILE_PORTRAIT_QUERY =
+  "(max-width: 780px) and (orientation: portrait)";
 
 const INITIAL_MATERIAL: MaterialControls = {
   preset: 0,
@@ -393,6 +421,7 @@ const fragmentShader = /* glsl */ `
   uniform float uPremiereActive;
   uniform float uPremiereIntensity;
   uniform float uPremiereSpeed;
+  uniform vec2 uClothSize;
 
   varying vec2 vUv;
   varying vec3 vWorldPosition;
@@ -493,7 +522,12 @@ const fragmentShader = /* glsl */ `
   }
 
   float weaveHeight(vec2 uv) {
-    vec2 p = uv * max(uTextureScale, 0.2);
+    vec2 physicalTextureScale =
+      uClothSize / vec2(3.35, 1.9);
+    vec2 p =
+      uv *
+      max(uTextureScale, 0.2) *
+      physicalTextureScale;
 
     if (uFabricPreset > 3.5) {
       return 0.5;
@@ -574,17 +608,25 @@ const fragmentShader = /* glsl */ `
       (-dpdx * duvdy.x + dpdy * duvdx.x) * inverseDeterminant
     );
 
+    vec2 physicalTextureScale =
+      uClothSize / vec2(3.35, 1.9);
     float textureFootprint =
-      max(fwidth(vUv.x), fwidth(vUv.y)) *
+      max(
+        fwidth(vUv.x) * physicalTextureScale.x,
+        fwidth(vUv.y) * physicalTextureScale.y
+      ) *
       max(uTextureScale, 0.2);
     float detailFade =
       1.0 - smoothstep(0.0024, 0.0085, textureFootprint);
-    float texel = 0.0016 / max(uTextureScale, 0.2);
+    vec2 texel =
+      vec2(0.0016) /
+      max(uTextureScale, 0.2) /
+      max(physicalTextureScale, vec2(0.001));
     float height = weaveHeight(vUv);
     float dHeightX =
-      weaveHeight(vUv + vec2(texel, 0.0)) - height;
+      weaveHeight(vUv + vec2(texel.x, 0.0)) - height;
     float dHeightY =
-      weaveHeight(vUv + vec2(0.0, texel)) - height;
+      weaveHeight(vUv + vec2(0.0, texel.y)) - height;
     vec3 normal = normalize(
       macroNormal -
       tangent * dHeightX * uNormalStrength * detailFade * 0.58 -
@@ -624,7 +666,12 @@ const fragmentShader = /* glsl */ `
           transitionCoordinate + transitionGrain
         );
       } else if (uTransitionMode < 1.5) {
-        vec2 tearUv = vec2(vUv.x * 7.2, vUv.y * 2.35);
+        float clothAspect =
+          uClothSize.x / max(uClothSize.y, 0.001);
+        vec2 tearUv = vec2(
+          vUv.x * clothAspect * 4.084,
+          vUv.y * 2.35
+        );
         tearUv.x += sin(vUv.y * 15.0 + uTransitionSeed) * 0.34;
         tearUv += vec2(uTransitionSeed * 1.37, uTransitionSeed * 0.73);
         float tearField =
@@ -646,7 +693,9 @@ const fragmentShader = /* glsl */ `
           smoothstep(0.0, 0.055, abs(tearField - tearThreshold));
       } else if (uTransitionMode < 2.5) {
         vec2 radialVector = vec2(
-          (vUv.x - uTransitionOrigin.x) * 1.763,
+          (vUv.x - uTransitionOrigin.x) *
+            uClothSize.x /
+            max(uClothSize.y, 0.001),
           vUv.y - uTransitionOrigin.y
         );
         float radialDistance = length(radialVector);
@@ -655,7 +704,12 @@ const fragmentShader = /* glsl */ `
           vec2(1.0) - uTransitionOrigin
         );
         float radialMaxDistance = length(
-          vec2(farthestCorner.x * 1.763, farthestCorner.y)
+          vec2(
+            farthestCorner.x *
+              uClothSize.x /
+              max(uClothSize.y, 0.001),
+            farthestCorner.y
+          )
         );
         float radialRadius = mix(
           -0.08,
@@ -801,10 +855,10 @@ const edgeFragmentShader = /* glsl */ `
   }
 `;
 
-function createEmptyArtwork() {
+function createEmptyArtwork(layout: ClothLayout) {
   const artwork = document.createElement("canvas");
-  artwork.width = 1024;
-  artwork.height = 576;
+  artwork.width = layout.textureWidth;
+  artwork.height = layout.textureHeight;
   return artwork;
 }
 
@@ -912,9 +966,6 @@ function drawArtworkImage(
   );
 }
 
-const CLOTH_WIDTH = 3.35;
-const CLOTH_HEIGHT = 1.9;
-
 function distanceToSegment(
   x: number,
   y: number,
@@ -955,7 +1006,7 @@ function tearNoise(
   );
 }
 
-function isTornArea(
+function isLandscapeTornArea(
   u: number,
   v: number,
   expansion: number,
@@ -989,10 +1040,38 @@ function isTornArea(
   return largeHole || smallHole || mainSlit || splitSlit || edgeTear;
 }
 
+function isTornArea(
+  u: number,
+  v: number,
+  expansion: number,
+  columns: number,
+  rows: number,
+  anchor: ClothAnchor,
+) {
+  if (anchor === "top") {
+    return isLandscapeTornArea(
+      1 - v,
+      u,
+      expansion,
+      rows,
+      columns,
+    );
+  }
+
+  return isLandscapeTornArea(
+    u,
+    v,
+    expansion,
+    columns,
+    rows,
+  );
+}
+
 function createTornIndex(
   geometry: THREE.PlaneGeometry,
   columns: number,
   rows: number,
+  anchor: ClothAnchor,
 ) {
   const sourceIndex = geometry.getIndex();
   const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
@@ -1005,7 +1084,7 @@ function createTornIndex(
     const c = sourceIndex.getX(triangle + 2);
     const centerU = (uv.getX(a) + uv.getX(b) + uv.getX(c)) / 3;
     const centerV = (uv.getY(a) + uv.getY(b) + uv.getY(c)) / 3;
-    if (!isTornArea(centerU, centerV, 0, columns, rows)) {
+    if (!isTornArea(centerU, centerV, 0, columns, rows, anchor)) {
       keptIndices.push(a, b, c);
     }
   }
@@ -1129,6 +1208,7 @@ function createClothSimulation(
   geometry: THREE.PlaneGeometry,
   columns: number,
   rows: number,
+  layout: ClothLayout,
 ) {
   const positionAttribute = geometry.getAttribute("position") as THREE.BufferAttribute;
   const positions = positionAttribute.array as Float32Array;
@@ -1145,8 +1225,15 @@ function createClothSimulation(
   const autoReleaseFrames = 20;
   const spatialHash = new Map<number, number[]>();
   const spatialBuckets: number[][] = [];
+  const resolutionSpan = Math.max(columns, rows);
   const baseConstraintIterations =
-    columns <= 48 ? 5 : columns <= 72 ? 6 : columns <= 96 ? 7 : 8;
+    resolutionSpan <= 48
+      ? 5
+      : resolutionSpan <= 72
+        ? 6
+        : resolutionSpan <= 96
+          ? 7
+          : 8;
   let tornEnabled = false;
   let simulationFrame = 0;
   let lastFreeEdgeVelocity = 0;
@@ -1168,7 +1255,10 @@ function createClothSimulation(
   } | null = null;
 
   const index = (column: number, row: number) => row * rowLength + column;
-  const pinnedVertices = [index(0, 0), index(0, rows)] as const;
+  const hangsFromTop = layout.anchor === "top";
+  const pinnedVertices = hangsFromTop
+    ? [index(0, 0), index(columns, 0)]
+    : [index(0, 0), index(0, rows)];
 
   for (const particle of pinnedVertices) {
     pinned[particle] = 1;
@@ -1197,6 +1287,7 @@ function createClothSimulation(
         0.014,
         columns,
         rows,
+        layout.anchor,
       ),
     });
   };
@@ -1233,11 +1324,16 @@ function createClothSimulation(
     autoReleaseFramesRemaining = 0;
 
     for (let row = 0; row <= rows; row += 1) {
-      for (let column = 1; column <= columns; column += 1) {
+      for (let column = 0; column <= columns; column += 1) {
+        const particle = index(column, row);
+        if (pinned[particle] === 1) continue;
         const vertex = index(column, row) * 3;
-        const normalizedColumn = column / columns;
+        const distanceFromAnchor = hangsFromTop
+          ? row / rows
+          : column / columns;
         const seed = Math.sin(column * 1.73 + row * 2.31);
-        positions[vertex + 2] = seed * 0.0025 * normalizedColumn;
+        positions[vertex + 2] =
+          seed * 0.0025 * distanceFromAnchor;
         previousPositions[vertex + 2] = positions[vertex + 2];
       }
     }
@@ -1581,6 +1677,9 @@ function createClothSimulation(
           const particle3 = particle * 3;
           const normalizedColumn = column / columns;
           const normalizedRow = row / rows;
+          const distanceFromAnchor = hangsFromTop
+            ? normalizedRow
+            : normalizedColumn;
           const currentX = positions[particle3];
           const currentY = positions[particle3 + 1];
           const currentZ = positions[particle3 + 2];
@@ -1600,29 +1699,56 @@ function createClothSimulation(
             Math.sin(time * 8.7 - normalizedRow * 23 + normalizedColumn * 15) *
               0.38;
           const wake =
-            Math.sin(time * 2.1 + normalizedRow * 8.4) *
-            Math.pow(normalizedColumn, 2.4);
+            Math.sin(
+              time * 2.1 +
+              (hangsFromTop ? normalizedColumn : normalizedRow) * 8.4,
+            ) *
+            Math.pow(distanceFromAnchor, 2.4);
           const windPull =
-            aerodynamicLoad * (7.4 + normalizedColumn * 2.4);
+            aerodynamicLoad *
+            (
+              hangsFromTop
+                ? 0.48 + distanceFromAnchor * 0.38
+                : 7.4 + distanceFromAnchor * 2.4
+            );
           const turbulenceForce =
             aerodynamicLoad *
             (wind.turbulence + transitionGust * 1.8) *
             (flutter * 0.62 + wake * 0.38) *
-            normalizedColumn *
-            1.25;
+            distanceFromAnchor *
+            (hangsFromTop ? 0.4 : 1.25);
 
-          positions[particle3] =
-            currentX + velocityX + windPull * squaredStep;
-          positions[particle3 + 1] =
-            currentY +
-            velocityY +
-            (
-              -wind.gravity * 3.15 +
-              wind.direction * aerodynamicLoad * 2.4
-            ) *
-              squaredStep;
-          positions[particle3 + 2] =
-            currentZ + velocityZ + turbulenceForce * squaredStep;
+          if (hangsFromTop) {
+            positions[particle3] =
+              currentX +
+              velocityX +
+              turbulenceForce * 0.08 * squaredStep;
+            positions[particle3 + 1] =
+              currentY +
+              velocityY +
+              (
+                -wind.gravity * 3.15 +
+                wind.direction * aerodynamicLoad * 0.34
+              ) *
+                squaredStep;
+            positions[particle3 + 2] =
+              currentZ +
+              velocityZ +
+              (windPull + turbulenceForce * 0.55) * squaredStep;
+          } else {
+            positions[particle3] =
+              currentX + velocityX + windPull * squaredStep;
+            positions[particle3 + 1] =
+              currentY +
+              velocityY +
+              (
+                -wind.gravity * 3.15 +
+                wind.direction * aerodynamicLoad * 2.4
+              ) *
+                squaredStep;
+            positions[particle3 + 2] =
+              currentZ + velocityZ + turbulenceForce * squaredStep;
+          }
         }
       }
 
@@ -1651,7 +1777,7 @@ function createClothSimulation(
       const useMidstepSelfCollision =
         grabState !== null &&
         (
-          columns <= 72 ||
+          resolutionSpan <= 72 ||
           (substepIndex === 0 && simulationFrame % 2 === 0)
         );
       if (useMidstepSelfCollision) {
@@ -1674,7 +1800,11 @@ function createClothSimulation(
 
     simulationFrame += 1;
     const selfCollisionCadence =
-      grabState !== null || columns <= 48 ? 1 : columns <= 72 ? 2 : 3;
+      grabState !== null || resolutionSpan <= 48
+        ? 1
+        : resolutionSpan <= 72
+          ? 2
+          : 3;
     solveConstraints();
     maximumGrabStress = Math.max(
       maximumGrabStress,
@@ -1696,7 +1826,7 @@ function createClothSimulation(
       );
       const needsAdaptiveSecondPass =
         !midstepSelfCollisionRan &&
-        columns <= 72 &&
+        resolutionSpan <= 72 &&
         collisionsResolved.collisionCount >
           Math.max(12, vertexCount * 0.004);
       if (needsAdaptiveSecondPass) {
@@ -1802,7 +1932,6 @@ function createClothSimulation(
       }
     }
 
-    const firstSampleColumn = Math.floor(columns * 0.55);
     const columnSampleStep = Math.max(1, Math.floor(columns / 12));
     const rowSampleStep = Math.max(1, Math.floor(rows / 8));
     const sampleTime = Math.max(substep, 1 / 240);
@@ -1810,19 +1939,49 @@ function createClothSimulation(
     let absoluteVelocitySum = 0;
     let audioSamples = 0;
 
-    for (let row = 0; row <= rows; row += rowSampleStep) {
+    if (hangsFromTop) {
+      const firstSampleRow = Math.floor(rows * 0.55);
       for (
-        let column = firstSampleColumn;
-        column <= columns;
-        column += columnSampleStep
+        let row = firstSampleRow;
+        row <= rows;
+        row += rowSampleStep
       ) {
-        const particle3 = index(column, row) * 3;
-        const velocityZ =
-          (positions[particle3 + 2] - previousPositions[particle3 + 2]) /
-          sampleTime;
-        velocitySum += velocityZ;
-        absoluteVelocitySum += Math.abs(velocityZ);
-        audioSamples += 1;
+        for (
+          let column = 0;
+          column <= columns;
+          column += columnSampleStep
+        ) {
+          const particle3 = index(column, row) * 3;
+          const velocityZ =
+            (
+              positions[particle3 + 2] -
+              previousPositions[particle3 + 2]
+            ) /
+            sampleTime;
+          velocitySum += velocityZ;
+          absoluteVelocitySum += Math.abs(velocityZ);
+          audioSamples += 1;
+        }
+      }
+    } else {
+      const firstSampleColumn = Math.floor(columns * 0.55);
+      for (let row = 0; row <= rows; row += rowSampleStep) {
+        for (
+          let column = firstSampleColumn;
+          column <= columns;
+          column += columnSampleStep
+        ) {
+          const particle3 = index(column, row) * 3;
+          const velocityZ =
+            (
+              positions[particle3 + 2] -
+              previousPositions[particle3 + 2]
+            ) /
+            sampleTime;
+          velocitySum += velocityZ;
+          absoluteVelocitySum += Math.abs(velocityZ);
+          audioSamples += 1;
+        }
       }
     }
 
@@ -1858,7 +2017,7 @@ function createClothSimulation(
 
   const poke = (u: number, v: number, strength = 0.32) => {
     const radius = 0.2;
-    const aspectCorrection = CLOTH_WIDTH / CLOTH_HEIGHT;
+    const aspectCorrection = layout.width / layout.height;
 
     for (let particle = 0; particle < vertexCount; particle += 1) {
       if (pinned[particle] === 1) continue;
@@ -1889,7 +2048,7 @@ function createClothSimulation(
     targetZ: number,
   ) => {
     const radius = grabSettings.radius;
-    const aspectCorrection = CLOTH_WIDTH / CLOTH_HEIGHT;
+    const aspectCorrection = layout.width / layout.height;
     const particles: NonNullable<typeof grabState>["particles"] = [];
     grabInfluence.fill(0);
 
@@ -2088,6 +2247,25 @@ export function FlagStudio() {
   const [clothSoundEnabled, setClothSoundEnabled] = useState(false);
   const [windSound, setWindSound] = useState(INITIAL_WIND_SOUND);
   const [artworkName, setArtworkName] = useState(INITIAL_DESIGN.label);
+  const [usesPortraitCloth, setUsesPortraitCloth] = useState(
+    () => window.matchMedia(MOBILE_PORTRAIT_QUERY).matches,
+  );
+
+  useEffect(() => {
+    const portraitQuery = window.matchMedia(MOBILE_PORTRAIT_QUERY);
+    const updateClothOrientation = () => {
+      setUsesPortraitCloth(portraitQuery.matches);
+    };
+
+    updateClothOrientation();
+    portraitQuery.addEventListener("change", updateClothOrientation);
+    return () => {
+      portraitQuery.removeEventListener(
+        "change",
+        updateClothOrientation,
+      );
+    };
+  }, []);
 
   useEffect(() => {
     const activePreset = DESIGN_PRESETS.find(
@@ -2323,6 +2501,9 @@ export function FlagStudio() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const clothLayout = usesPortraitCloth
+      ? PORTRAIT_CLOTH
+      : LANDSCAPE_CLOTH;
     const settings = simulationSettingsRef.current;
     setIsLoading(true);
     let disposed = false;
@@ -2350,7 +2531,7 @@ export function FlagStudio() {
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
-    camera.position.set(0.15, 0, 6.6);
+    camera.position.set(usesPortraitCloth ? 0 : 0.15, 0, 6.6);
     const initialBackgroundPalette =
       DESIGN_PRESETS.find(
         (design) => design.id === settings.activeDesign,
@@ -2551,21 +2732,33 @@ export function FlagStudio() {
       backgroundNeedsRender = true;
     };
 
-    const { columns, rows } = MESH_RESOLUTIONS[meshQuality];
+    const baseResolution = MESH_RESOLUTIONS[meshQuality];
+    const columns = usesPortraitCloth
+      ? baseResolution.rows
+      : baseResolution.columns;
+    const rows = usesPortraitCloth
+      ? baseResolution.columns
+      : baseResolution.rows;
 
     const geometry = new THREE.PlaneGeometry(
-      CLOTH_WIDTH,
-      CLOTH_HEIGHT,
+      clothLayout.width,
+      clothLayout.height,
       columns,
       rows,
     );
     const intactIndex = geometry.getIndex()?.clone() ?? null;
-    const tornIndex = createTornIndex(geometry, columns, rows);
+    const tornIndex = createTornIndex(
+      geometry,
+      columns,
+      rows,
+      clothLayout.anchor,
+    );
     if (!intactIndex || !tornIndex) return;
     const clothSimulation = createClothSimulation(
       geometry,
       columns,
       rows,
+      clothLayout,
     );
     const intactClothEdge = createClothEdgeGeometry(
       geometry,
@@ -2590,7 +2783,7 @@ export function FlagStudio() {
         clothSimulation.setGrabSettings(settings),
     };
     clothSimulation.setGrabSettings(grabSettingsRef.current);
-    const artworkCanvas = createEmptyArtwork();
+    const artworkCanvas = createEmptyArtwork(clothLayout);
     artworkCanvasRef.current = artworkCanvas;
     const artworkTexture = new THREE.CanvasTexture(artworkCanvas);
     artworkTexture.colorSpace = THREE.SRGBColorSpace;
@@ -2732,6 +2925,12 @@ export function FlagStudio() {
         value: settings.lighting.premiereIntensity,
       },
       uPremiereSpeed: { value: settings.lighting.premiereSpeed },
+      uClothSize: {
+        value: new THREE.Vector2(
+          clothLayout.width,
+          clothLayout.height,
+        ),
+      },
     };
     uniformsRef.current = uniforms;
     let designTransitionFrame = 0;
@@ -2881,7 +3080,8 @@ export function FlagStudio() {
     edgeSurface.frustumCulled = false;
     flag.add(frontSurface, backSurface, edgeSurface);
     flag.rotation.x = -0.025;
-    flag.rotation.y = -0.12;
+    flag.rotation.y = usesPortraitCloth ? -0.08 : -0.12;
+    flag.position.y = usesPortraitCloth ? -0.04 : 0;
     scene.add(flag);
     tearModeUpdaterRef.current = (enabled: boolean) => {
       geometry.setIndex(enabled ? tornIndex : intactIndex);
@@ -2958,15 +3158,49 @@ export function FlagStudio() {
         prefersReducedMotion ? 0 : width < 780 ? 0.62 : 1;
       camera.aspect = width / Math.max(height, 1);
       const verticalFov = THREE.MathUtils.degToRad(camera.fov);
-      const portraitFitDistance =
-        (CLOTH_WIDTH * uniforms.uFlagSize.value * 1.1) /
-        (2 * Math.tan(verticalFov / 2) * camera.aspect);
-      camera.position.z =
-        camera.aspect < 0.8
-          ? Math.max(7.4, portraitFitDistance)
-          : width < 680
-            ? 7.4
-            : 6.6;
+      const halfVerticalTangent = Math.tan(verticalFov / 2);
+      if (usesPortraitCloth) {
+        const horizontalFov = 2 * Math.atan(
+          halfVerticalTangent * camera.aspect,
+        );
+        const fitHeightDistance =
+          (
+            clothLayout.height *
+            uniforms.uFlagSize.value *
+            1.18
+          ) /
+          (2 * halfVerticalTangent);
+        const fitWidthDistance =
+          (
+            clothLayout.width *
+            uniforms.uFlagSize.value *
+            1.18
+          ) /
+          (2 * Math.tan(horizontalFov / 2));
+        camera.position.z = Math.max(
+          7.4,
+          fitHeightDistance,
+          fitWidthDistance,
+        );
+      } else {
+        const portraitFitDistance =
+          (
+            clothLayout.width *
+            uniforms.uFlagSize.value *
+            1.1
+          ) /
+          (
+            2 *
+            halfVerticalTangent *
+            camera.aspect
+          );
+        camera.position.z =
+          camera.aspect < 0.8
+            ? Math.max(7.4, portraitFitDistance)
+            : width < 680
+              ? 7.4
+              : 6.6;
+      }
       camera.updateProjectionMatrix();
     };
     resizeStageRef.current = resize;
@@ -3214,7 +3448,12 @@ export function FlagStudio() {
       }
 
       pointer.lerp(pointerTarget, 0.045);
-      flag.rotation.y = THREE.MathUtils.lerp(flag.rotation.y, -0.12 + pointer.x * 0.08, 0.04);
+      const baseFlagRotationY = usesPortraitCloth ? -0.08 : -0.12;
+      flag.rotation.y = THREE.MathUtils.lerp(
+        flag.rotation.y,
+        baseFlagRotationY + pointer.x * 0.08,
+        0.04,
+      );
       flag.rotation.x = THREE.MathUtils.lerp(flag.rotation.x, -0.025 - pointer.y * 0.045, 0.04);
       backgroundUniforms.uBackgroundTime.value =
         uniforms.uTime.value;
@@ -3307,7 +3546,7 @@ export function FlagStudio() {
       simulationResetRef.current = () => undefined;
       resizeStageRef.current = () => undefined;
     };
-  }, [meshQuality]);
+  }, [meshQuality, usesPortraitCloth]);
 
   useEffect(() => {
     windRef.current = wind;
@@ -3396,7 +3635,7 @@ export function FlagStudio() {
 
   useEffect(() => {
     tearModeUpdaterRef.current(tornMode);
-  }, [meshQuality, tornMode]);
+  }, [meshQuality, tornMode, usesPortraitCloth]);
 
   useEffect(() => {
     grabSettingsRef.current = grabSettings;
