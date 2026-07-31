@@ -644,7 +644,7 @@ button {
   top: -30px;
   z-index: 4;
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   align-items: center;
   gap: 3px;
   margin: 0 -2px;
@@ -659,8 +659,8 @@ button {
   display: grid;
   place-items: center;
   justify-self: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 50%;
@@ -1036,6 +1036,10 @@ input[type="range"]::-moz-range-thumb {
 
 .loading-preview-control {
   padding-top: 0;
+}
+
+.focus-toggle-control {
+  padding: 0 0 18px;
 }
 
 .toggle-switch {

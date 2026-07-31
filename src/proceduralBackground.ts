@@ -43,7 +43,6 @@ export const proceduralBackgroundCompositeFragmentShader = /* glsl */ `
 
     gl_FragColor = texture2D(uBackgroundTexture, vUv);
     gl_FragColor.rgb += dither * (0.6 / 255.0);
-    #include <colorspace_fragment>
     gl_FragColor.rgb += dither * (0.25 / 255.0);
   }
 `;

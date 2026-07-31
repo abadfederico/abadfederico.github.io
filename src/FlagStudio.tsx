@@ -127,6 +127,14 @@ type BackgroundControls = Pick<
   "intensity" | "speed" | "warp"
 >;
 
+type FocusControls = {
+  enabled: boolean;
+  radius: number;
+  feather: number;
+  blur: number;
+  follow: number;
+};
+
 type ControlTab =
   | "motion"
   | "sound"
@@ -134,6 +142,7 @@ type ControlTab =
   | "material"
   | "lighting"
   | "background"
+  | "focus"
   | "artwork";
 type MeshQuality = 1 | 2 | 3 | 4;
 type TransitionMode = "logo" | "touch" | "weave" | "tear";
@@ -192,6 +201,15 @@ const MOBILE_PORTRAIT_HEIGHT_SCALE = 0.84;
 const MOBILE_PORTRAIT_WIDTH_SCALE = 0.72;
 const MOBILE_ARTWORK_SCALE_MULTIPLIER = 1.45;
 const MOBILE_ARTWORK_VERTICAL_OFFSET = -0.06;
+const FOCUS_BLUR_SCALE = 0.45;
+
+const INITIAL_FOCUS: FocusControls = {
+  enabled: false,
+  radius: 150,
+  feather: 72,
+  blur: 1.35,
+  follow: 14,
+};
 
 const PORTRAIT_CLOTH: ClothLayout = {
   width: LANDSCAPE_CLOTH.height * MOBILE_PORTRAIT_WIDTH_SCALE,
@@ -238,13 +256,13 @@ const INITIAL_WIND_SOUND: WindSoundControls = {
 };
 
 const INITIAL_LIGHTING: LightingControls = {
-  ambient: 0.25,
-  keyIntensity: 1,
-  horizontal: -0.45,
-  vertical: 0.72,
-  depth: 1,
-  rimIntensity: 0.18,
-  color: "#FFF2D8",
+  ambient: 0.1,
+  keyIntensity: 1.14,
+  horizontal: -0.59,
+  vertical: 0.29,
+  depth: 0.52,
+  rimIntensity: 0.55,
+  color: "#FFFFFF",
   premiereIntensity: 1.15,
   premiereSpeed: 1,
 };
@@ -863,6 +881,56 @@ const edgeFragmentShader = /* glsl */ `
       uLightColor * diffuse * 0.34 * uKeyIntensity;
     vec3 edgeColor = uColor * edgeLighting;
     gl_FragColor = vec4(edgeColor, 1.0);
+  }
+`;
+
+const focusBlurFragmentShader = /* glsl */ `
+  precision highp float;
+
+  varying vec2 vUv;
+  uniform sampler2D uTexture;
+  uniform vec2 uTexelStep;
+
+  void main() {
+    vec4 color = texture2D(uTexture, vUv) * 0.227027;
+    color += texture2D(uTexture, vUv + uTexelStep * 1.384615) * 0.316216;
+    color += texture2D(uTexture, vUv - uTexelStep * 1.384615) * 0.316216;
+    color += texture2D(uTexture, vUv + uTexelStep * 3.230769) * 0.070270;
+    color += texture2D(uTexture, vUv - uTexelStep * 3.230769) * 0.070270;
+    gl_FragColor = color;
+  }
+`;
+
+const focusCompositeFragmentShader = /* glsl */ `
+  precision highp float;
+
+  varying vec2 vUv;
+  uniform sampler2D uSharpTexture;
+  uniform sampler2D uBlurredTexture;
+  uniform vec2 uFocusCenter;
+  uniform vec2 uResolution;
+  uniform float uFocusAmount;
+  uniform float uFocusRadius;
+  uniform float uFocusFeather;
+
+  void main() {
+    vec4 sharp = texture2D(uSharpTexture, vUv);
+    if (uFocusAmount < 0.001) {
+      gl_FragColor = sharp;
+      #include <colorspace_fragment>
+      return;
+    }
+
+    vec4 blurred = texture2D(uBlurredTexture, vUv);
+    float pointerDistance = length((vUv - uFocusCenter) * uResolution);
+    float focusMask = 1.0 - smoothstep(
+      uFocusRadius,
+      uFocusRadius + uFocusFeather,
+      pointerDistance
+    );
+    float sharpMix = mix(1.0, focusMask, uFocusAmount);
+    gl_FragColor = mix(blurred, sharp, sharpMix);
+    #include <colorspace_fragment>
   }
 `;
 
@@ -2235,6 +2303,7 @@ export function FlagStudio() {
     configure: () => undefined,
   });
   const grabSettingsRef = useRef(INITIAL_GRAB);
+  const focusControlsRef = useRef(INITIAL_FOCUS);
   const transitionModeRef = useRef<TransitionMode>(
     INITIAL_TRANSITION_MODE,
   );
@@ -2266,6 +2335,7 @@ export function FlagStudio() {
   const [artworkScale, setArtworkScale] = useState(INITIAL_ARTWORK_SCALE);
   const [materialSettings, setMaterialSettings] = useState(INITIAL_MATERIAL);
   const [grabSettings, setGrabSettings] = useState(INITIAL_GRAB);
+  const [focusControls, setFocusControls] = useState(INITIAL_FOCUS);
   const [lighting, setLighting] = useState(INITIAL_LIGHTING);
   const [backgroundSettings, setBackgroundSettings] =
     useState<BackgroundControls>(
@@ -2574,6 +2644,9 @@ export function FlagStudio() {
     const prefersReducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
+    const supportsHoverFocus = window.matchMedia(
+      "(hover: hover) and (pointer: fine)",
+    ).matches;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -2697,6 +2770,92 @@ export function FlagStudio() {
     );
     backgroundCompositeMesh.frustumCulled = false;
     backgroundCompositeScene.add(backgroundCompositeMesh);
+
+    const focusSceneRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: true,
+      stencilBuffer: false,
+    });
+    const focusBlurHorizontalTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    const focusBlurVerticalTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    focusSceneRenderTarget.texture.generateMipmaps = false;
+    focusBlurHorizontalTarget.texture.generateMipmaps = false;
+    focusBlurVerticalTarget.texture.generateMipmaps = false;
+
+    const postProcessGeometry = new THREE.PlaneGeometry(2, 2);
+    const focusBlurHorizontalScene = new THREE.Scene();
+    const focusBlurHorizontalMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: { value: focusSceneRenderTarget.texture },
+        uTexelStep: { value: new THREE.Vector2(1, 0) },
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: focusBlurFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const focusBlurHorizontalMesh = new THREE.Mesh(
+      postProcessGeometry,
+      focusBlurHorizontalMaterial,
+    );
+    focusBlurHorizontalMesh.frustumCulled = false;
+    focusBlurHorizontalScene.add(focusBlurHorizontalMesh);
+
+    const focusBlurVerticalScene = new THREE.Scene();
+    const focusBlurVerticalMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: { value: focusBlurHorizontalTarget.texture },
+        uTexelStep: { value: new THREE.Vector2(0, 1) },
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: focusBlurFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const focusBlurVerticalMesh = new THREE.Mesh(
+      postProcessGeometry,
+      focusBlurVerticalMaterial,
+    );
+    focusBlurVerticalMesh.frustumCulled = false;
+    focusBlurVerticalScene.add(focusBlurVerticalMesh);
+
+    const focusCompositeUniforms: Record<string, THREE.IUniform> = {
+      uSharpTexture: { value: focusSceneRenderTarget.texture },
+      uBlurredTexture: { value: focusBlurVerticalTarget.texture },
+      uFocusCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uResolution: { value: new THREE.Vector2(1, 1) },
+      uFocusAmount: { value: 0 },
+      uFocusRadius: { value: INITIAL_FOCUS.radius },
+      uFocusFeather: { value: INITIAL_FOCUS.feather },
+    };
+    const focusCompositeScene = new THREE.Scene();
+    const focusCompositeMaterial = new THREE.ShaderMaterial({
+      uniforms: focusCompositeUniforms,
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: focusCompositeFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const focusCompositeMesh = new THREE.Mesh(
+      postProcessGeometry,
+      focusCompositeMaterial,
+    );
+    focusCompositeMesh.frustumCulled = false;
+    focusCompositeScene.add(focusCompositeMesh);
     renderer.autoClear = false;
 
     const backgroundColorKeys = ["Edge", "A", "B", "C"] as const;
@@ -3173,6 +3332,10 @@ export function FlagStudio() {
 
     const pointer = new THREE.Vector2();
     const pointerTarget = new THREE.Vector2();
+    const focusPointer = new THREE.Vector2(0.5, 0.5);
+    const focusPointerTarget = new THREE.Vector2(0.5, 0.5);
+    let focusAmount = 0;
+    let focusAmountTarget = 0;
     const tapPointer = new THREE.Vector2();
     const tapRaycaster = new THREE.Raycaster();
     const dragPlane = new THREE.Plane();
@@ -3198,6 +3361,7 @@ export function FlagStudio() {
     let lowFpsIntervals = 0;
     let highFpsIntervals = 0;
     const drawingBufferSize = new THREE.Vector2();
+    const focusBlurResolution = new THREE.Vector2(1, 1);
 
     const resize = () => {
       const parent = canvas.parentElement;
@@ -3214,6 +3378,38 @@ export function FlagStudio() {
       renderer.setSize(width, height, false);
       renderer.getDrawingBufferSize(drawingBufferSize);
       uniforms.uViewport.value.copy(drawingBufferSize);
+      const focusBlurWidth = Math.max(
+        1,
+        Math.round(drawingBufferSize.x * FOCUS_BLUR_SCALE),
+      );
+      const focusBlurHeight = Math.max(
+        1,
+        Math.round(drawingBufferSize.y * FOCUS_BLUR_SCALE),
+      );
+      focusSceneRenderTarget.setSize(
+        Math.max(1, Math.round(drawingBufferSize.x)),
+        Math.max(1, Math.round(drawingBufferSize.y)),
+      );
+      focusBlurHorizontalTarget.setSize(
+        focusBlurWidth,
+        focusBlurHeight,
+      );
+      focusBlurVerticalTarget.setSize(
+        focusBlurWidth,
+        focusBlurHeight,
+      );
+      focusBlurResolution.set(focusBlurWidth, focusBlurHeight);
+      (
+        focusBlurHorizontalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(focusControlsRef.current.blur / focusBlurWidth, 0);
+      (
+        focusBlurVerticalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(0, focusControlsRef.current.blur / focusBlurHeight);
+      (
+        focusCompositeUniforms.uResolution.value as THREE.Vector2
+      ).set(width, height);
       const backgroundScale = width < 780 ? 0.48 : 0.62;
       const backgroundWidth = Math.max(
         1,
@@ -3313,6 +3509,25 @@ export function FlagStudio() {
     };
 
     const handlePointer = (event: PointerEvent) => {
+      const bounds = canvas.getBoundingClientRect();
+      if (supportsHoverFocus && focusControlsRef.current.enabled) {
+        focusPointerTarget.set(
+          THREE.MathUtils.clamp(
+            (event.clientX - bounds.left) / Math.max(bounds.width, 1),
+            0,
+            1,
+          ),
+          THREE.MathUtils.clamp(
+            1 -
+              (event.clientY - bounds.top) /
+                Math.max(bounds.height, 1),
+            0,
+            1,
+          ),
+        );
+        focusAmountTarget = 1;
+      }
+
       if (
         tapStart.grabbed &&
         tapStart.pointerId === event.pointerId
@@ -3344,7 +3559,6 @@ export function FlagStudio() {
         return;
       }
 
-      const bounds = canvas.getBoundingClientRect();
       pointerTarget.x =
         ((event.clientX - bounds.left) / bounds.width - 0.5) * 2;
       pointerTarget.y =
@@ -3352,6 +3566,7 @@ export function FlagStudio() {
     };
     const handlePointerLeave = () => {
       if (!tapStart.grabbed) pointerTarget.set(0, 0);
+      focusAmountTarget = 0;
     };
     const handleCanvasPointerDown = (event: PointerEvent) => {
       if (!event.isPrimary || event.button !== 0) return;
@@ -3526,6 +3741,47 @@ export function FlagStudio() {
       }
 
       pointer.lerp(pointerTarget, 0.045);
+      const currentFocusControls = focusControlsRef.current;
+      if (!currentFocusControls.enabled) focusAmountTarget = 0;
+      const focusFollow = prefersReducedMotion
+        ? 1
+        : 1 - Math.exp(-delta * currentFocusControls.follow);
+      const focusFade = prefersReducedMotion
+        ? 1
+        : 1 -
+          Math.exp(
+            -delta * Math.max(6, currentFocusControls.follow * 0.72),
+          );
+      focusPointer.lerp(focusPointerTarget, focusFollow);
+      focusAmount = THREE.MathUtils.lerp(
+        focusAmount,
+        focusAmountTarget,
+        focusFade,
+      );
+      (
+        focusCompositeUniforms.uFocusCenter.value as THREE.Vector2
+      ).copy(focusPointer);
+      focusCompositeUniforms.uFocusAmount.value = focusAmount;
+      focusCompositeUniforms.uFocusRadius.value =
+        currentFocusControls.radius;
+      focusCompositeUniforms.uFocusFeather.value =
+        currentFocusControls.feather;
+      (
+        focusBlurHorizontalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(
+        currentFocusControls.blur /
+          Math.max(focusBlurResolution.x, 1),
+        0,
+      );
+      (
+        focusBlurVerticalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(
+        0,
+        currentFocusControls.blur /
+          Math.max(focusBlurResolution.y, 1),
+      );
       const baseFlagRotationY = usesPortraitCloth ? -0.08 : -0.12;
       flag.rotation.y = THREE.MathUtils.lerp(
         flag.rotation.y,
@@ -3549,6 +3805,8 @@ export function FlagStudio() {
         renderer.setRenderTarget(null);
         backgroundNeedsRender = false;
       }
+
+      renderer.setRenderTarget(focusSceneRenderTarget);
       renderer.clear(true, true, true);
       renderer.render(
         backgroundCompositeScene,
@@ -3556,6 +3814,25 @@ export function FlagStudio() {
       );
       renderer.clearDepth();
       renderer.render(scene, camera);
+
+      if (focusAmount > 0.001) {
+        renderer.setRenderTarget(focusBlurHorizontalTarget);
+        renderer.clear(true, true, true);
+        renderer.render(
+          focusBlurHorizontalScene,
+          backgroundCamera,
+        );
+        renderer.setRenderTarget(focusBlurVerticalTarget);
+        renderer.clear(true, true, true);
+        renderer.render(
+          focusBlurVerticalScene,
+          backgroundCamera,
+        );
+      }
+
+      renderer.setRenderTarget(null);
+      renderer.clear(true, true, true);
+      renderer.render(focusCompositeScene, backgroundCamera);
       if (!hasRendered) {
         hasRendered = true;
         completeLoading();
@@ -3567,6 +3844,11 @@ export function FlagStudio() {
     const canvasParent = canvas.parentElement;
     if (canvasParent) resizeObserver.observe(canvasParent);
     window.addEventListener("resize", resize);
+    window.addEventListener("blur", handlePointerLeave);
+    document.documentElement.addEventListener(
+      "pointerleave",
+      handlePointerLeave,
+    );
     canvas.addEventListener("pointermove", handlePointer);
     canvas.addEventListener("pointerleave", handlePointerLeave);
     canvas.addEventListener("pointerdown", handleCanvasPointerDown);
@@ -3581,6 +3863,11 @@ export function FlagStudio() {
       window.cancelAnimationFrame(backgroundTransitionFrame);
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
+      window.removeEventListener("blur", handlePointerLeave);
+      document.documentElement.removeEventListener(
+        "pointerleave",
+        handlePointerLeave,
+      );
       canvas.removeEventListener("pointermove", handlePointer);
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       canvas.removeEventListener("pointerdown", handleCanvasPointerDown);
@@ -3602,6 +3889,13 @@ export function FlagStudio() {
       backgroundCompositeGeometry.dispose();
       backgroundCompositeMaterial.dispose();
       backgroundRenderTarget.dispose();
+      focusSceneRenderTarget.dispose();
+      focusBlurHorizontalTarget.dispose();
+      focusBlurVerticalTarget.dispose();
+      postProcessGeometry.dispose();
+      focusBlurHorizontalMaterial.dispose();
+      focusBlurVerticalMaterial.dispose();
+      focusCompositeMaterial.dispose();
       artworkTexture.dispose();
       previousArtworkTexture.dispose();
       renderer.dispose();
@@ -3726,6 +4020,10 @@ export function FlagStudio() {
     clothGrabRef.current.configure(grabSettings);
   }, [grabSettings]);
 
+  useEffect(() => {
+    focusControlsRef.current = focusControls;
+  }, [focusControls]);
+
   const updateWind =
     (key: keyof WindControls) => (value: number) => {
       setWind((current) => ({
@@ -3746,6 +4044,15 @@ export function FlagStudio() {
   const updateGrab =
     (key: keyof GrabControls) => (value: number) => {
       setGrabSettings((current) => ({
+        ...current,
+        [key]: value,
+      }));
+    };
+
+  const updateFocus =
+    (key: Exclude<keyof FocusControls, "enabled">) =>
+    (value: number) => {
+      setFocusControls((current) => ({
         ...current,
         [key]: value,
       }));
@@ -4607,6 +4914,8 @@ export function FlagStudio() {
     setArtworkScale(INITIAL_ARTWORK_SCALE);
     setMaterialSettings(INITIAL_MATERIAL);
     setGrabSettings(INITIAL_GRAB);
+    focusControlsRef.current = INITIAL_FOCUS;
+    setFocusControls(INITIAL_FOCUS);
     setLighting(INITIAL_LIGHTING);
     const initialBackgroundSettings = getBackgroundControls(
       selectedDesign.background,
@@ -4908,6 +5217,18 @@ export function FlagStudio() {
           >
             <span className="control-tab-icon" aria-hidden="true">▦</span>
             <span className="sr-only">Gráfica</span>
+          </button>
+          <button
+            id="focus-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeControlTab === "focus"}
+            aria-controls="focus-panel"
+            className={activeControlTab === "focus" ? "is-active" : ""}
+            onClick={() => setActiveControlTab("focus")}
+          >
+            <span className="control-tab-icon" aria-hidden="true">◎</span>
+            <span className="sr-only">Foco</span>
           </button>
         </div>
 
@@ -5529,6 +5850,80 @@ export function FlagStudio() {
             step={0.01}
             display={`${backgroundSettings.warp.toFixed(2)}×`}
             onChange={(value) => updateBackground("warp", value)}
+          />
+        </div>
+
+        <div
+          id="focus-panel"
+          className="control-group control-tab-panel"
+          role="tabpanel"
+          aria-labelledby="focus-tab"
+          hidden={activeControlTab !== "focus"}
+        >
+          <div className="toggle-control focus-toggle-control">
+            <div>
+              <span>Foco bajo el mouse</span>
+              <small>
+                Conserva nítida el área del puntero y desenfoca el resto
+              </small>
+            </div>
+            <button
+              className={`toggle-switch ${
+                focusControls.enabled ? "is-active" : ""
+              }`}
+              type="button"
+              role="switch"
+              aria-checked={focusControls.enabled}
+              onClick={() =>
+                setFocusControls((current) => ({
+                  ...current,
+                  enabled: !current.enabled,
+                }))
+              }
+            >
+              <span aria-hidden="true" />
+              <span className="sr-only">
+                {focusControls.enabled
+                  ? "Desactivar foco bajo el mouse"
+                  : "Activar foco bajo el mouse"}
+              </span>
+            </button>
+          </div>
+          <Control
+            label="Radio nítido"
+            value={focusControls.radius}
+            min={50}
+            max={280}
+            step={1}
+            display={`${Math.round(focusControls.radius)} px`}
+            onChange={updateFocus("radius")}
+          />
+          <Control
+            label="Suavidad del borde"
+            value={focusControls.feather}
+            min={8}
+            max={180}
+            step={1}
+            display={`${Math.round(focusControls.feather)} px`}
+            onChange={updateFocus("feather")}
+          />
+          <Control
+            label="Intensidad del desenfoque"
+            value={focusControls.blur}
+            min={0.35}
+            max={3.5}
+            step={0.01}
+            display={`${focusControls.blur.toFixed(2)}×`}
+            onChange={updateFocus("blur")}
+          />
+          <Control
+            label="Velocidad de seguimiento"
+            value={focusControls.follow}
+            min={3}
+            max={30}
+            step={0.5}
+            display={`${focusControls.follow.toFixed(1)}×`}
+            onChange={updateFocus("follow")}
           />
         </div>
 
