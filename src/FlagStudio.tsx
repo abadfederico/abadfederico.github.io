@@ -188,13 +188,24 @@ const LANDSCAPE_CLOTH: ClothLayout = {
   anchor: "left",
 };
 
+const MOBILE_PORTRAIT_HEIGHT_SCALE = 0.84;
+const MOBILE_PORTRAIT_WIDTH_SCALE = 0.8;
+const MOBILE_ARTWORK_SCALE_MULTIPLIER = 1.2;
+const MOBILE_ARTWORK_VERTICAL_OFFSET = -0.06;
+
 const PORTRAIT_CLOTH: ClothLayout = {
-  width: LANDSCAPE_CLOTH.height,
-  height: LANDSCAPE_CLOTH.width,
-  textureWidth: LANDSCAPE_CLOTH.textureHeight,
-  textureHeight: LANDSCAPE_CLOTH.textureWidth,
+  width: LANDSCAPE_CLOTH.height * MOBILE_PORTRAIT_WIDTH_SCALE,
+  height: LANDSCAPE_CLOTH.width * MOBILE_PORTRAIT_HEIGHT_SCALE,
+  textureWidth: Math.round(
+    LANDSCAPE_CLOTH.textureHeight * MOBILE_PORTRAIT_WIDTH_SCALE,
+  ),
+  textureHeight: Math.round(
+    LANDSCAPE_CLOTH.textureWidth * MOBILE_PORTRAIT_HEIGHT_SCALE,
+  ),
   anchor: "top",
 };
+
+const MOBILE_PENNANT_POINT_HEIGHT = 0.24;
 
 const MOBILE_PORTRAIT_QUERY =
   "(max-width: 780px) and (orientation: portrait)";
@@ -936,6 +947,8 @@ function drawArtworkImage(
   artworkCanvas: HTMLCanvasElement,
   image: HTMLImageElement,
   artworkScale: number,
+  scaleMultiplier = 1,
+  verticalOffset = 0,
 ) {
   const targetContext = artworkCanvas.getContext("2d");
   if (!targetContext) return;
@@ -949,7 +962,7 @@ function drawArtworkImage(
     (artworkCanvas.width - horizontalPadding * 2) / sourceWidth,
     (artworkCanvas.height - verticalPadding * 2) / sourceHeight,
   );
-  const scale = fitScale * artworkScale;
+  const scale = fitScale * artworkScale * scaleMultiplier;
   const targetWidth = sourceWidth * scale;
   const targetHeight = sourceHeight * scale;
 
@@ -960,7 +973,8 @@ function drawArtworkImage(
     sourceWidth,
     sourceHeight,
     (artworkCanvas.width - targetWidth) / 2,
-    (artworkCanvas.height - targetHeight) / 2,
+    (artworkCanvas.height - targetHeight) / 2 +
+      artworkCanvas.height * verticalOffset,
     targetWidth,
     targetHeight,
   );
@@ -1067,25 +1081,59 @@ function isTornArea(
   );
 }
 
-function createTornIndex(
+function createClothIndex(
   geometry: THREE.PlaneGeometry,
   columns: number,
   rows: number,
   anchor: ClothAnchor,
+  pointedPennantHeight: number,
+  torn: boolean,
 ) {
-  const sourceIndex = geometry.getIndex();
   const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
-  if (!sourceIndex) return null;
   const keptIndices: number[] = [];
+  const rowLength = columns + 1;
+  const usesPointedPennant = pointedPennantHeight > 0;
 
-  for (let triangle = 0; triangle < sourceIndex.count; triangle += 3) {
-    const a = sourceIndex.getX(triangle);
-    const b = sourceIndex.getX(triangle + 1);
-    const c = sourceIndex.getX(triangle + 2);
-    const centerU = (uv.getX(a) + uv.getX(b) + uv.getX(c)) / 3;
-    const centerV = (uv.getY(a) + uv.getY(b) + uv.getY(c)) / 3;
-    if (!isTornArea(centerU, centerV, 0, columns, rows, anchor)) {
-      keptIndices.push(a, b, c);
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const topLeft = row * rowLength + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = (row + 1) * rowLength + column;
+      const bottomRight = bottomLeft + 1;
+      const triangles =
+        usesPointedPennant && column < columns / 2
+          ? [
+              [topLeft, bottomRight, topRight],
+              [topLeft, bottomLeft, bottomRight],
+            ]
+          : [
+              [topLeft, bottomLeft, topRight],
+              [bottomLeft, bottomRight, topRight],
+            ];
+
+      for (const [a, b, c] of triangles) {
+        const centerU =
+          (uv.getX(a) + uv.getX(b) + uv.getX(c)) / 3;
+        const centerV =
+          (uv.getY(a) + uv.getY(b) + uv.getY(c)) / 3;
+        const distanceFromCenter = Math.abs(centerU - 0.5) * 2;
+        const outsidePennant =
+          centerV < pointedPennantHeight * distanceFromCenter;
+        const insideTear =
+          torn &&
+          isTornArea(
+            centerU,
+            centerV,
+            0,
+            columns,
+            rows,
+            anchor,
+          );
+
+        if (!outsidePennant && !insideTear) {
+          keptIndices.push(a, b, c);
+        }
+      }
     }
   }
 
@@ -2504,6 +2552,12 @@ export function FlagStudio() {
     const clothLayout = usesPortraitCloth
       ? PORTRAIT_CLOTH
       : LANDSCAPE_CLOTH;
+    const artworkScaleMultiplier = usesPortraitCloth
+      ? MOBILE_ARTWORK_SCALE_MULTIPLIER
+      : 1;
+    const artworkVerticalOffset = usesPortraitCloth
+      ? MOBILE_ARTWORK_VERTICAL_OFFSET
+      : 0;
     const settings = simulationSettingsRef.current;
     setIsLoading(true);
     let disposed = false;
@@ -2737,8 +2791,13 @@ export function FlagStudio() {
       ? baseResolution.rows
       : baseResolution.columns;
     const rows = usesPortraitCloth
-      ? baseResolution.columns
+      ? Math.round(
+          columns / (2 * MOBILE_PENNANT_POINT_HEIGHT),
+        )
       : baseResolution.rows;
+    const pointedPennantHeight = usesPortraitCloth
+      ? columns / (2 * rows)
+      : 0;
 
     const geometry = new THREE.PlaneGeometry(
       clothLayout.width,
@@ -2746,12 +2805,21 @@ export function FlagStudio() {
       columns,
       rows,
     );
-    const intactIndex = geometry.getIndex()?.clone() ?? null;
-    const tornIndex = createTornIndex(
+    const intactIndex = createClothIndex(
       geometry,
       columns,
       rows,
       clothLayout.anchor,
+      pointedPennantHeight,
+      false,
+    );
+    const tornIndex = createClothIndex(
+      geometry,
+      columns,
+      rows,
+      clothLayout.anchor,
+      pointedPennantHeight,
+      true,
     );
     if (!intactIndex || !tornIndex) return;
     const clothSimulation = createClothSimulation(
@@ -2820,6 +2888,8 @@ export function FlagStudio() {
         artworkCanvas,
         existingArtworkImage,
         artworkScaleRef.current,
+        artworkScaleMultiplier,
+        artworkVerticalOffset,
       );
       artworkTexture.needsUpdate = true;
       copyCurrentArtworkToPrevious();
@@ -2841,6 +2911,8 @@ export function FlagStudio() {
           artworkCanvas,
           initialImage,
           artworkScaleRef.current,
+          artworkScaleMultiplier,
+          artworkVerticalOffset,
         );
         artworkTexture.needsUpdate = true;
         copyCurrentArtworkToPrevious();
@@ -2945,7 +3017,13 @@ export function FlagStudio() {
       transitionGustRef.current = 0;
       copyCurrentArtworkToPrevious();
       uniforms.uPreviousColor.value.copy(uniforms.uColor.value);
-      drawArtworkImage(artworkCanvas, image, nextArtworkScale);
+      drawArtworkImage(
+        artworkCanvas,
+        image,
+        nextArtworkScale,
+        artworkScaleMultiplier,
+        artworkVerticalOffset,
+      );
       artworkTexture.needsUpdate = true;
       uniforms.uColor.value.set(nextColor);
       uniforms.uTransitionDirection.value = direction >= 0 ? 1 : -1;
@@ -3172,7 +3250,7 @@ export function FlagStudio() {
           (2 * halfVerticalTangent);
         const fitWidthDistance =
           (
-            clothLayout.width *
+            LANDSCAPE_CLOTH.height *
             uniforms.uFlagSize.value *
             1.18
           ) /
@@ -3629,9 +3707,15 @@ export function FlagStudio() {
     const artworkImage = artworkImageRef.current;
     const texture = textureRef.current;
     if (!artworkCanvas || !artworkImage || !texture) return;
-    drawArtworkImage(artworkCanvas, artworkImage, artworkScale);
+    drawArtworkImage(
+      artworkCanvas,
+      artworkImage,
+      artworkScale,
+      usesPortraitCloth ? MOBILE_ARTWORK_SCALE_MULTIPLIER : 1,
+      usesPortraitCloth ? MOBILE_ARTWORK_VERTICAL_OFFSET : 0,
+    );
     texture.needsUpdate = true;
-  }, [artworkScale]);
+  }, [artworkScale, usesPortraitCloth]);
 
   useEffect(() => {
     tearModeUpdaterRef.current(tornMode);
