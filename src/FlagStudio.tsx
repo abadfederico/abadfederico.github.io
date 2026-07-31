@@ -1,4 +1,11 @@
-import { ChangeEvent, useEffect, useId, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as THREE from "three";
 import {
   CUSTOM_BACKGROUND_PALETTE,
@@ -24,6 +31,7 @@ type MaterialControls = {
   normalStrength: number;
   bumpStrength: number;
   roughness: number;
+  sheenIntensity: number;
 };
 
 type GrabControls = {
@@ -36,6 +44,8 @@ type GrabControls = {
 type LightingControls = {
   ambient: number;
   keyIntensity: number;
+  fillIntensity: number;
+  shadowIntensity: number;
   horizontal: number;
   vertical: number;
   depth: number;
@@ -135,6 +145,20 @@ type FocusControls = {
   follow: number;
 };
 
+type MoodSettings = {
+  wind: WindControls;
+  material: MaterialControls;
+  lighting: LightingControls;
+  background: BackgroundControls;
+};
+
+type MoodPreset = MoodSettings & {
+  id: string;
+  name: string;
+  accent: string;
+  custom?: boolean;
+};
+
 type ControlTab =
   | "motion"
   | "sound"
@@ -167,7 +191,7 @@ const INITIAL_WIND: WindControls = {
 
 const INITIAL_FLAG_SIZE = 1.2;
 const INITIAL_ARTWORK_SCALE = 0.55;
-const INITIAL_MESH_QUALITY: MeshQuality = 2;
+const INITIAL_MESH_QUALITY: MeshQuality = 3;
 const INITIAL_TRANSITION_MODE: TransitionMode = "logo";
 const MAX_ARTWORK_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ARTWORK_DIMENSION = 8192;
@@ -230,11 +254,12 @@ const MOBILE_PORTRAIT_QUERY =
 
 const INITIAL_MATERIAL: MaterialControls = {
   preset: 0,
-  scale: 2.5,
+  scale: 3,
   thickness: 0.009,
-  normalStrength: 0.58,
-  bumpStrength: 0.69,
-  roughness: 1,
+  normalStrength: 2.23,
+  bumpStrength: 1.43,
+  roughness: 0.86,
+  sheenIntensity: 0.83,
 };
 
 const INITIAL_GRAB: GrabControls = {
@@ -258,6 +283,8 @@ const INITIAL_WIND_SOUND: WindSoundControls = {
 const INITIAL_LIGHTING: LightingControls = {
   ambient: 0.1,
   keyIntensity: 1.14,
+  fillIntensity: 0.22,
+  shadowIntensity: 0.42,
   horizontal: -0.59,
   vertical: 0.29,
   depth: 0.52,
@@ -265,6 +292,205 @@ const INITIAL_LIGHTING: LightingControls = {
   color: "#FFFFFF",
   premiereIntensity: 1.15,
   premiereSpeed: 1,
+};
+
+const CUSTOM_MOODS_STORAGE_KEY = "abad-human-custom-moods-v1";
+
+const DEFAULT_MOODS: MoodPreset[] = [
+  {
+    id: "calma",
+    name: "Calma",
+    accent: "#A8DADC",
+    wind: {
+      strength: 1.4,
+      turbulence: 2.4,
+      direction: 0.35,
+      speed: 0.55,
+      gravity: 1.15,
+      gustiness: 0.8,
+    },
+    material: {
+      preset: 1,
+      scale: 1.75,
+      thickness: 0.012,
+      normalStrength: 0.45,
+      bumpStrength: 0.38,
+      roughness: 1,
+      sheenIntensity: 0.35,
+    },
+    lighting: {
+      ambient: 0.18,
+      keyIntensity: 0.82,
+      fillIntensity: 0.32,
+      shadowIntensity: 0.25,
+      horizontal: -0.35,
+      vertical: 0.65,
+      depth: 1.2,
+      rimIntensity: 0.28,
+      color: "#FFF4E6",
+      premiereIntensity: 0.7,
+      premiereSpeed: 0.55,
+    },
+    background: { intensity: 0.03, speed: 0.16, warp: 0.07 },
+  },
+  {
+    id: "editorial",
+    name: "Editorial",
+    accent: "#F4F1E9",
+    wind: { ...INITIAL_WIND },
+    material: { ...INITIAL_MATERIAL },
+    lighting: { ...INITIAL_LIGHTING },
+    background: { intensity: 0.08, speed: 0.42, warp: 0.2 },
+  },
+  {
+    id: "tormenta",
+    name: "Tormenta",
+    accent: "#778CFF",
+    wind: {
+      strength: 8.2,
+      turbulence: 8,
+      direction: -0.15,
+      speed: 2.1,
+      gravity: 1.5,
+      gustiness: 3,
+    },
+    material: {
+      preset: 3,
+      scale: 1.15,
+      thickness: 0.018,
+      normalStrength: 1.05,
+      bumpStrength: 1.08,
+      roughness: 0.72,
+      sheenIntensity: 1.15,
+    },
+    lighting: {
+      ambient: 0.06,
+      keyIntensity: 1.5,
+      fillIntensity: 0.15,
+      shadowIntensity: 0.65,
+      horizontal: -0.95,
+      vertical: 0.12,
+      depth: 0.35,
+      rimIntensity: 0.9,
+      color: "#DCE7FF",
+      premiereIntensity: 1.7,
+      premiereSpeed: 1.8,
+    },
+    background: { intensity: 0.1, speed: 1.1, warp: 0.5 },
+  },
+  {
+    id: "nocturno",
+    name: "Nocturno",
+    accent: "#A78BFA",
+    wind: {
+      strength: 2.4,
+      turbulence: 4.2,
+      direction: -0.15,
+      speed: 0.75,
+      gravity: 1.4,
+      gustiness: 1.4,
+    },
+    material: {
+      preset: 2,
+      scale: 1.4,
+      thickness: 0.016,
+      normalStrength: 0.82,
+      bumpStrength: 0.75,
+      roughness: 0.85,
+      sheenIntensity: 0.8,
+    },
+    lighting: {
+      ambient: 0.045,
+      keyIntensity: 0.72,
+      fillIntensity: 0.18,
+      shadowIntensity: 0.58,
+      horizontal: 0.72,
+      vertical: 0.12,
+      depth: 0.45,
+      rimIntensity: 1.1,
+      color: "#91A9FF",
+      premiereIntensity: 1.3,
+      premiereSpeed: 0.7,
+    },
+    background: { intensity: 0.095, speed: 0.22, warp: 0.28 },
+  },
+];
+
+const moodSettingsSignature = (settings: MoodSettings) =>
+  [
+    settings.wind.strength,
+    settings.wind.turbulence,
+    settings.wind.direction,
+    settings.wind.speed,
+    settings.wind.gravity,
+    settings.wind.gustiness,
+    settings.material.preset,
+    settings.material.scale,
+    settings.material.thickness,
+    settings.material.normalStrength,
+    settings.material.bumpStrength,
+    settings.material.roughness,
+    settings.material.sheenIntensity,
+    settings.lighting.ambient,
+    settings.lighting.keyIntensity,
+    settings.lighting.fillIntensity,
+    settings.lighting.shadowIntensity,
+    settings.lighting.horizontal,
+    settings.lighting.vertical,
+    settings.lighting.depth,
+    settings.lighting.rimIntensity,
+    settings.lighting.color.toUpperCase(),
+    settings.lighting.premiereIntensity,
+    settings.lighting.premiereSpeed,
+    settings.background.intensity,
+    settings.background.speed,
+    settings.background.warp,
+  ].join("|");
+
+const isStoredMood = (value: unknown): value is MoodPreset => {
+  if (!value || typeof value !== "object") return false;
+  const mood = value as Partial<MoodPreset>;
+  if (
+    typeof mood.id !== "string" ||
+    typeof mood.name !== "string" ||
+    typeof mood.accent !== "string" ||
+    !mood.wind ||
+    !mood.material ||
+    !mood.lighting ||
+    !mood.background
+  ) {
+    return false;
+  }
+
+  const numericValues = [
+    ...Object.values(mood.wind),
+    ...Object.values(mood.material),
+    ...Object.entries(mood.lighting)
+      .filter(([key]) => key !== "color")
+      .map(([, entry]) => entry),
+    ...Object.values(mood.background),
+  ];
+  return (
+    numericValues.every(
+      (entry) => typeof entry === "number" && Number.isFinite(entry),
+    ) &&
+    typeof mood.lighting.color === "string" &&
+    /^#[0-9a-f]{6}$/i.test(mood.lighting.color)
+  );
+};
+
+const loadCustomMoods = (): MoodPreset[] => {
+  try {
+    const stored = window.localStorage.getItem(CUSTOM_MOODS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(isStoredMood)
+      .map((mood) => ({ ...mood, custom: true }));
+  } catch {
+    return [];
+  }
 };
 
 const getBackgroundControls = (
@@ -414,7 +640,13 @@ const vertexShader = /* glsl */ `
       (position + normal * uThickness * 0.5 * SURFACE_DIRECTION) *
       uFlagSize *
       uTransitionScale;
-    vWorldNormal = normalize(normalMatrix * normal);
+    vec3 transformedNormal = normalMatrix * normal;
+    float transformedNormalLengthSquared =
+      dot(transformedNormal, transformedNormal);
+    vWorldNormal =
+      transformedNormalLengthSquared > 0.00000001
+        ? transformedNormal * inversesqrt(transformedNormalLengthSquared)
+        : vec3(0.0, 0.0, 1.0);
     vFold = position.z;
     vec4 worldPosition = modelMatrix * vec4(p, 1.0);
     vWorldPosition = worldPosition.xyz;
@@ -440,8 +672,10 @@ const fragmentShader = /* glsl */ `
   uniform float uNormalStrength;
   uniform float uBumpStrength;
   uniform float uRoughness;
+  uniform float uSheenIntensity;
   uniform float uAmbientIntensity;
   uniform float uKeyIntensity;
+  uniform float uFillIntensity;
   uniform float uLightX;
   uniform float uLightY;
   uniform float uLightZ;
@@ -456,6 +690,13 @@ const fragmentShader = /* glsl */ `
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
   varying float vFold;
+
+  vec3 safeNormalize(vec3 value, vec3 fallback) {
+    float lengthSquared = dot(value, value);
+    return lengthSquared > 0.00000001
+      ? value * inversesqrt(lengthSquared)
+      : fallback;
+  }
 
   float thread(float value, float frequency, float sharpness) {
     float phase = value * frequency;
@@ -624,18 +865,41 @@ const fragmentShader = /* glsl */ `
     vec3 dpdy = dFdy(vWorldPosition);
     vec2 duvdx = dFdx(vUv);
     vec2 duvdy = dFdy(vUv);
-    vec3 macroNormal = normalize(vWorldNormal);
+    vec3 macroNormal = safeNormalize(
+      vWorldNormal,
+      vec3(0.0, 0.0, 1.0)
+    );
     if (!gl_FrontFacing) macroNormal *= -1.0;
 
     float determinant = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
     float inverseDeterminant =
       abs(determinant) > 0.000001 ? 1.0 / determinant : 1.0;
-    vec3 tangent = normalize(
-      (dpdx * duvdy.y - dpdy * duvdx.y) * inverseDeterminant
+    vec3 fallbackAxis =
+      abs(macroNormal.y) < 0.999
+        ? vec3(0.0, 1.0, 0.0)
+        : vec3(1.0, 0.0, 0.0);
+    vec3 fallbackTangent = safeNormalize(
+      cross(fallbackAxis, macroNormal),
+      vec3(1.0, 0.0, 0.0)
     );
-    vec3 bitangent = normalize(
-      (-dpdx * duvdy.x + dpdy * duvdx.x) * inverseDeterminant
-    );
+    vec3 tangentCandidate =
+      (dpdx * duvdy.y - dpdy * duvdx.y) * inverseDeterminant;
+    float tangentLengthSquared = dot(tangentCandidate, tangentCandidate);
+    vec3 tangent =
+      tangentLengthSquared > 0.00000001
+        ? tangentCandidate * inversesqrt(tangentLengthSquared)
+        : fallbackTangent;
+    vec3 bitangentCandidate =
+      (-dpdx * duvdy.x + dpdy * duvdx.x) * inverseDeterminant;
+    float bitangentLengthSquared =
+      dot(bitangentCandidate, bitangentCandidate);
+    vec3 bitangent =
+      bitangentLengthSquared > 0.00000001
+        ? bitangentCandidate * inversesqrt(bitangentLengthSquared)
+        : safeNormalize(
+            cross(macroNormal, tangent),
+            vec3(0.0, 1.0, 0.0)
+          );
 
     vec2 physicalTextureScale =
       uClothSize / vec2(3.35, 1.9);
@@ -652,27 +916,74 @@ const fragmentShader = /* glsl */ `
       max(uTextureScale, 0.2) /
       max(physicalTextureScale, vec2(0.001));
     float height = weaveHeight(vUv);
-    float dHeightX =
-      weaveHeight(vUv + vec2(texel.x, 0.0)) - height;
-    float dHeightY =
-      weaveHeight(vUv + vec2(0.0, texel.y)) - height;
-    vec3 normal = normalize(
+    vec2 heightGradient = vec2(
+      weaveHeight(vUv + vec2(texel.x, 0.0)) -
+        weaveHeight(vUv - vec2(texel.x, 0.0)),
+      weaveHeight(vUv + vec2(0.0, texel.y)) -
+        weaveHeight(vUv - vec2(0.0, texel.y))
+    ) * 0.5;
+    float gradientLimit =
+      uFabricPreset < 0.5 ? 0.12 : 0.34;
+    heightGradient *= min(
+      1.0,
+      gradientLimit / max(length(heightGradient), 0.0001)
+    );
+    vec3 normal = safeNormalize(
       macroNormal -
-      tangent * dHeightX * uNormalStrength * detailFade * 0.58 -
-      bitangent * dHeightY * uNormalStrength * detailFade * 0.58
+        tangent * heightGradient.x * uNormalStrength * detailFade * 0.58 -
+        bitangent * heightGradient.y * uNormalStrength * detailFade * 0.58,
+      macroNormal
     );
 
-    vec3 keyLight = normalize(vec3(uLightX, uLightY, uLightZ));
-    vec3 rimLight = normalize(vec3(0.7, -0.2, -0.55));
+    vec3 keyLight = safeNormalize(
+      vec3(uLightX, uLightY, uLightZ),
+      vec3(0.0, 0.0, 1.0)
+    );
+    vec3 fillLight = safeNormalize(
+      vec3(-uLightX, max(0.18, -uLightY * 0.35), uLightZ),
+      vec3(0.0, 0.0, 1.0)
+    );
+    vec3 rimLight = safeNormalize(
+      vec3(0.7, -0.2, -0.55),
+      vec3(0.0, 0.0, -1.0)
+    );
     float diffuse = max(dot(normal, keyLight), 0.0);
-    float rim = pow(1.0 - abs(normal.z), 2.4);
+    float fillDiffuse = max(dot(normal, fillLight), 0.0);
+    float rim = pow(
+      clamp(1.0 - abs(normal.z), 0.0, 1.0),
+      2.4
+    );
     float back = max(dot(normal, rimLight), 0.0);
-    vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-    vec3 halfDirection = normalize(keyLight + viewDirection);
-    float specularPower = mix(96.0, 9.0, uRoughness);
+    vec3 viewDirection = safeNormalize(
+      cameraPosition - vWorldPosition,
+      vec3(0.0, 0.0, 1.0)
+    );
+    vec3 halfDirection = safeNormalize(
+      keyLight + viewDirection,
+      normal
+    );
+    float specularPower = mix(72.0, 11.0, uRoughness);
+    float fiberAlignment = pow(
+      clamp(abs(dot(tangent, halfDirection)), 0.0, 1.0),
+      1.5
+    );
+    float anisotropicResponse = mix(0.74, 1.28, fiberAlignment);
     float specular =
-      pow(max(dot(normal, halfDirection), 0.0), specularPower) *
-      mix(0.34, 0.035, uRoughness);
+      pow(
+        clamp(dot(normal, halfDirection), 0.0, 1.0),
+        specularPower
+      ) *
+      mix(0.24, 0.032, uRoughness) *
+      anisotropicResponse;
+    float grazingSheen =
+      pow(
+        clamp(1.0 - dot(normal, viewDirection), 0.0, 1.0),
+        3.2
+      ) *
+      mix(0.075, 0.032, uRoughness) *
+      mix(0.82, 1.12, fiberAlignment);
+    float fiberHighlight =
+      (specular + grazingSheen) * uSheenIntensity;
 
     float reveal = 1.0;
     float tearEdge = 0.0;
@@ -802,11 +1113,15 @@ const fragmentShader = /* glsl */ `
     vec3 fabric =
       mix(previousFabric, nextFabric, reveal) * SURFACE_SHADE;
     fabric *= 1.0 - tearEdge * 0.2 - radialEdge * 0.08;
-    float bump = (height - 0.5) * uBumpStrength * detailFade;
+    float shadingHeight =
+      uFabricPreset < 0.5 ? 0.5 : height;
+    float bump =
+      (shadingHeight - 0.5) * uBumpStrength * detailFade;
     fabric *= 1.0 + bump * 0.08;
 
     float directLighting =
       diffuse * 0.76 * uKeyIntensity +
+      fillDiffuse * uFillIntensity +
       back * 0.16 +
       rim * uRimIntensity;
     directLighting += bump * 0.035;
@@ -826,13 +1141,15 @@ const fragmentShader = /* glsl */ `
     }
     vec3 premiereColor = vec3(0.52, 0.68, 1.0);
     lighting += premiereColor * premiereLighting * 0.92;
+    vec3 fiberHighlightColor = mix(uLightColor, fabric, 0.32);
 
     gl_FragColor = vec4(
       fabric * lighting +
-      specular * uLightColor * uKeyIntensity +
+      fiberHighlight * fiberHighlightColor * uKeyIntensity +
       premiereColor * premiereLighting * 0.055,
       1.0
     );
+    #include <colorspace_fragment>
   }
 `;
 
@@ -861,6 +1178,7 @@ const edgeFragmentShader = /* glsl */ `
   uniform vec3 uColor;
   uniform float uAmbientIntensity;
   uniform float uKeyIntensity;
+  uniform float uFillIntensity;
   uniform float uLightX;
   uniform float uLightY;
   uniform float uLightZ;
@@ -875,12 +1193,55 @@ const edgeFragmentShader = /* glsl */ `
     if (!gl_FrontFacing) normal *= -1.0;
 
     vec3 keyLight = normalize(vec3(uLightX, uLightY, uLightZ));
+    vec3 fillLight = normalize(
+      vec3(-uLightX, max(0.18, -uLightY * 0.35), uLightZ)
+    );
     float diffuse = max(dot(normal, keyLight), 0.0);
+    float fillDiffuse = max(dot(normal, fillLight), 0.0);
     vec3 edgeLighting =
       vec3(max(uAmbientIntensity * 0.8, 0.0)) +
-      uLightColor * diffuse * 0.34 * uKeyIntensity;
+      uLightColor * (
+        diffuse * 0.34 * uKeyIntensity +
+        fillDiffuse * uFillIntensity * 0.24
+      );
     vec3 edgeColor = uColor * edgeLighting;
     gl_FragColor = vec4(edgeColor, 1.0);
+    #include <colorspace_fragment>
+  }
+`;
+
+const clothShadowVertexShader = /* glsl */ `
+  uniform float uFlagSize;
+  uniform float uTransitionScale;
+  uniform float uLightX;
+  uniform float uLightY;
+  uniform float uShadowSpread;
+  uniform float uShadowOffset;
+  uniform float uShadowDepth;
+
+  void main() {
+    vec3 p = position * uFlagSize * uTransitionScale;
+    p.xy *= uShadowSpread;
+    vec2 castDirection = normalize(
+      vec2(-uLightX, -uLightY) + vec2(0.0001)
+    );
+    p.xy += castDirection * uShadowOffset;
+    p.z -= uShadowDepth;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  }
+`;
+
+const clothShadowFragmentShader = /* glsl */ `
+  uniform vec3 uShadowColor;
+  uniform float uShadowIntensity;
+  uniform float uLayerOpacity;
+
+  void main() {
+    gl_FragColor = vec4(
+      uShadowColor,
+      uShadowIntensity * uLayerOpacity
+    );
+    #include <colorspace_fragment>
   }
 `;
 
@@ -2365,9 +2726,43 @@ export function FlagStudio() {
   const [clothSoundEnabled, setClothSoundEnabled] = useState(false);
   const [windSound, setWindSound] = useState(INITIAL_WIND_SOUND);
   const [artworkName, setArtworkName] = useState(INITIAL_DESIGN.label);
+  const [customMoods, setCustomMoods] = useState<MoodPreset[]>(
+    loadCustomMoods,
+  );
+  const [appliedMoodId, setAppliedMoodId] = useState<string | null>(
+    "editorial",
+  );
+  const [moodEditorOpen, setMoodEditorOpen] = useState(false);
+  const [moodNameDraft, setMoodNameDraft] = useState("");
   const [usesPortraitCloth, setUsesPortraitCloth] = useState(
     () => window.matchMedia(MOBILE_PORTRAIT_QUERY).matches,
   );
+  const allMoods = useMemo(
+    () => [...DEFAULT_MOODS, ...customMoods],
+    [customMoods],
+  );
+  const appliedMood = allMoods.find((mood) => mood.id === appliedMoodId);
+  const activeMoodId =
+    appliedMood &&
+    moodSettingsSignature({
+      wind,
+      material: materialSettings,
+      lighting,
+      background: backgroundSettings,
+    }) === moodSettingsSignature(appliedMood)
+      ? appliedMood.id
+      : null;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        CUSTOM_MOODS_STORAGE_KEY,
+        JSON.stringify(customMoods),
+      );
+    } catch {
+      // The mood still works for the current session if storage is blocked.
+    }
+  }, [customMoods]);
 
   useEffect(() => {
     const portraitQuery = window.matchMedia(MOBILE_PORTRAIT_QUERY);
@@ -2771,91 +3166,112 @@ export function FlagStudio() {
     backgroundCompositeMesh.frustumCulled = false;
     backgroundCompositeScene.add(backgroundCompositeMesh);
 
-    const focusSceneRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: true,
-      stencilBuffer: false,
-    });
-    const focusBlurHorizontalTarget = new THREE.WebGLRenderTarget(1, 1, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
-    const focusBlurVerticalTarget = new THREE.WebGLRenderTarget(1, 1, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
-    focusSceneRenderTarget.texture.generateMipmaps = false;
-    focusBlurHorizontalTarget.texture.generateMipmaps = false;
-    focusBlurVerticalTarget.texture.generateMipmaps = false;
+    const focusPipeline = supportsHoverFocus
+      ? (() => {
+          const sceneRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            depthBuffer: true,
+            stencilBuffer: false,
+          });
+          const blurHorizontalTarget = new THREE.WebGLRenderTarget(1, 1, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            depthBuffer: false,
+            stencilBuffer: false,
+          });
+          const blurVerticalTarget = new THREE.WebGLRenderTarget(1, 1, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            depthBuffer: false,
+            stencilBuffer: false,
+          });
+          sceneRenderTarget.texture.generateMipmaps = false;
+          blurHorizontalTarget.texture.generateMipmaps = false;
+          blurVerticalTarget.texture.generateMipmaps = false;
+          sceneRenderTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
+          blurHorizontalTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
+          blurVerticalTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
 
-    const postProcessGeometry = new THREE.PlaneGeometry(2, 2);
-    const focusBlurHorizontalScene = new THREE.Scene();
-    const focusBlurHorizontalMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTexture: { value: focusSceneRenderTarget.texture },
-        uTexelStep: { value: new THREE.Vector2(1, 0) },
-      },
-      vertexShader: proceduralBackgroundVertexShader,
-      fragmentShader: focusBlurFragmentShader,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    const focusBlurHorizontalMesh = new THREE.Mesh(
-      postProcessGeometry,
-      focusBlurHorizontalMaterial,
-    );
-    focusBlurHorizontalMesh.frustumCulled = false;
-    focusBlurHorizontalScene.add(focusBlurHorizontalMesh);
+          const geometry = new THREE.PlaneGeometry(2, 2);
+          const blurHorizontalScene = new THREE.Scene();
+          const blurHorizontalMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+              uTexture: { value: sceneRenderTarget.texture },
+              uTexelStep: { value: new THREE.Vector2(1, 0) },
+            },
+            vertexShader: proceduralBackgroundVertexShader,
+            fragmentShader: focusBlurFragmentShader,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false,
+          });
+          const blurHorizontalMesh = new THREE.Mesh(
+            geometry,
+            blurHorizontalMaterial,
+          );
+          blurHorizontalMesh.frustumCulled = false;
+          blurHorizontalScene.add(blurHorizontalMesh);
 
-    const focusBlurVerticalScene = new THREE.Scene();
-    const focusBlurVerticalMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTexture: { value: focusBlurHorizontalTarget.texture },
-        uTexelStep: { value: new THREE.Vector2(0, 1) },
-      },
-      vertexShader: proceduralBackgroundVertexShader,
-      fragmentShader: focusBlurFragmentShader,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    const focusBlurVerticalMesh = new THREE.Mesh(
-      postProcessGeometry,
-      focusBlurVerticalMaterial,
-    );
-    focusBlurVerticalMesh.frustumCulled = false;
-    focusBlurVerticalScene.add(focusBlurVerticalMesh);
+          const blurVerticalScene = new THREE.Scene();
+          const blurVerticalMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+              uTexture: { value: blurHorizontalTarget.texture },
+              uTexelStep: { value: new THREE.Vector2(0, 1) },
+            },
+            vertexShader: proceduralBackgroundVertexShader,
+            fragmentShader: focusBlurFragmentShader,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false,
+          });
+          const blurVerticalMesh = new THREE.Mesh(
+            geometry,
+            blurVerticalMaterial,
+          );
+          blurVerticalMesh.frustumCulled = false;
+          blurVerticalScene.add(blurVerticalMesh);
 
-    const focusCompositeUniforms: Record<string, THREE.IUniform> = {
-      uSharpTexture: { value: focusSceneRenderTarget.texture },
-      uBlurredTexture: { value: focusBlurVerticalTarget.texture },
-      uFocusCenter: { value: new THREE.Vector2(0.5, 0.5) },
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uFocusAmount: { value: 0 },
-      uFocusRadius: { value: INITIAL_FOCUS.radius },
-      uFocusFeather: { value: INITIAL_FOCUS.feather },
-    };
-    const focusCompositeScene = new THREE.Scene();
-    const focusCompositeMaterial = new THREE.ShaderMaterial({
-      uniforms: focusCompositeUniforms,
-      vertexShader: proceduralBackgroundVertexShader,
-      fragmentShader: focusCompositeFragmentShader,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    const focusCompositeMesh = new THREE.Mesh(
-      postProcessGeometry,
-      focusCompositeMaterial,
-    );
-    focusCompositeMesh.frustumCulled = false;
-    focusCompositeScene.add(focusCompositeMesh);
+          const compositeUniforms: Record<string, THREE.IUniform> = {
+            uSharpTexture: { value: sceneRenderTarget.texture },
+            uBlurredTexture: { value: blurVerticalTarget.texture },
+            uFocusCenter: { value: new THREE.Vector2(0.5, 0.5) },
+            uResolution: { value: new THREE.Vector2(1, 1) },
+            uFocusAmount: { value: 0 },
+            uFocusRadius: { value: INITIAL_FOCUS.radius },
+            uFocusFeather: { value: INITIAL_FOCUS.feather },
+          };
+          const compositeScene = new THREE.Scene();
+          const compositeMaterial = new THREE.ShaderMaterial({
+            uniforms: compositeUniforms,
+            vertexShader: proceduralBackgroundVertexShader,
+            fragmentShader: focusCompositeFragmentShader,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false,
+          });
+          const compositeMesh = new THREE.Mesh(
+            geometry,
+            compositeMaterial,
+          );
+          compositeMesh.frustumCulled = false;
+          compositeScene.add(compositeMesh);
+
+          return {
+            sceneRenderTarget,
+            blurHorizontalTarget,
+            blurVerticalTarget,
+            geometry,
+            blurHorizontalScene,
+            blurHorizontalMaterial,
+            blurVerticalScene,
+            blurVerticalMaterial,
+            compositeScene,
+            compositeMaterial,
+            compositeUniforms,
+          };
+        })()
+      : null;
     renderer.autoClear = false;
 
     const backgroundColorKeys = ["Edge", "A", "B", "C"] as const;
@@ -3138,8 +3554,11 @@ export function FlagStudio() {
       uNormalStrength: { value: settings.material.normalStrength },
       uBumpStrength: { value: settings.material.bumpStrength },
       uRoughness: { value: settings.material.roughness },
+      uSheenIntensity: { value: settings.material.sheenIntensity },
       uAmbientIntensity: { value: settings.lighting.ambient },
       uKeyIntensity: { value: settings.lighting.keyIntensity },
+      uFillIntensity: { value: settings.lighting.fillIntensity },
+      uShadowIntensity: { value: settings.lighting.shadowIntensity },
       uLightX: { value: settings.lighting.horizontal },
       uLightY: { value: settings.lighting.vertical },
       uLightZ: { value: settings.lighting.depth },
@@ -3295,6 +3714,7 @@ export function FlagStudio() {
         uColor: uniforms.uColor,
         uAmbientIntensity: uniforms.uAmbientIntensity,
         uKeyIntensity: uniforms.uKeyIntensity,
+        uFillIntensity: uniforms.uFillIntensity,
         uLightX: uniforms.uLightX,
         uLightY: uniforms.uLightY,
         uLightZ: uniforms.uLightZ,
@@ -3303,6 +3723,40 @@ export function FlagStudio() {
       vertexShader: edgeVertexShader,
       fragmentShader: edgeFragmentShader,
       side: THREE.DoubleSide,
+    });
+
+    const shadowLayers = [
+      { spread: 1.012, offset: 0.032, depth: 0.05, opacity: 0.32 },
+      { spread: 1.028, offset: 0.052, depth: 0.065, opacity: 0.18 },
+      { spread: 1.05, offset: 0.076, depth: 0.08, opacity: 0.1 },
+    ];
+    const shadowMaterials = shadowLayers.map(
+      (layer) =>
+        new THREE.ShaderMaterial({
+          uniforms: {
+            uFlagSize: uniforms.uFlagSize,
+            uTransitionScale: uniforms.uTransitionScale,
+            uLightX: uniforms.uLightX,
+            uLightY: uniforms.uLightY,
+            uShadowSpread: { value: layer.spread },
+            uShadowOffset: { value: layer.offset },
+            uShadowDepth: { value: layer.depth },
+            uShadowColor: { value: new THREE.Color("#030208") },
+            uShadowIntensity: uniforms.uShadowIntensity,
+            uLayerOpacity: { value: layer.opacity },
+          },
+          vertexShader: clothShadowVertexShader,
+          fragmentShader: clothShadowFragmentShader,
+          side: THREE.DoubleSide,
+          transparent: true,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+    );
+    const shadowSurfaces = shadowMaterials.map((material) => {
+      const surface = new THREE.Mesh(geometry, material);
+      surface.frustumCulled = false;
+      return surface;
     });
 
     const flag = new THREE.Group();
@@ -3315,7 +3769,7 @@ export function FlagStudio() {
     frontSurface.frustumCulled = false;
     backSurface.frustumCulled = false;
     edgeSurface.frustumCulled = false;
-    flag.add(frontSurface, backSurface, edgeSurface);
+    flag.add(...shadowSurfaces, frontSurface, backSurface, edgeSurface);
     flag.rotation.x = -0.025;
     flag.rotation.y = usesPortraitCloth ? -0.08 : -0.12;
     flag.position.y = usesPortraitCloth ? -0.04 : 0;
@@ -3378,38 +3832,41 @@ export function FlagStudio() {
       renderer.setSize(width, height, false);
       renderer.getDrawingBufferSize(drawingBufferSize);
       uniforms.uViewport.value.copy(drawingBufferSize);
-      const focusBlurWidth = Math.max(
-        1,
-        Math.round(drawingBufferSize.x * FOCUS_BLUR_SCALE),
-      );
-      const focusBlurHeight = Math.max(
-        1,
-        Math.round(drawingBufferSize.y * FOCUS_BLUR_SCALE),
-      );
-      focusSceneRenderTarget.setSize(
-        Math.max(1, Math.round(drawingBufferSize.x)),
-        Math.max(1, Math.round(drawingBufferSize.y)),
-      );
-      focusBlurHorizontalTarget.setSize(
-        focusBlurWidth,
-        focusBlurHeight,
-      );
-      focusBlurVerticalTarget.setSize(
-        focusBlurWidth,
-        focusBlurHeight,
-      );
-      focusBlurResolution.set(focusBlurWidth, focusBlurHeight);
-      (
-        focusBlurHorizontalMaterial.uniforms.uTexelStep
-          .value as THREE.Vector2
-      ).set(focusControlsRef.current.blur / focusBlurWidth, 0);
-      (
-        focusBlurVerticalMaterial.uniforms.uTexelStep
-          .value as THREE.Vector2
-      ).set(0, focusControlsRef.current.blur / focusBlurHeight);
-      (
-        focusCompositeUniforms.uResolution.value as THREE.Vector2
-      ).set(width, height);
+      if (focusPipeline) {
+        const focusBlurWidth = Math.max(
+          1,
+          Math.round(drawingBufferSize.x * FOCUS_BLUR_SCALE),
+        );
+        const focusBlurHeight = Math.max(
+          1,
+          Math.round(drawingBufferSize.y * FOCUS_BLUR_SCALE),
+        );
+        focusPipeline.sceneRenderTarget.setSize(
+          Math.max(1, Math.round(drawingBufferSize.x)),
+          Math.max(1, Math.round(drawingBufferSize.y)),
+        );
+        focusPipeline.blurHorizontalTarget.setSize(
+          focusBlurWidth,
+          focusBlurHeight,
+        );
+        focusPipeline.blurVerticalTarget.setSize(
+          focusBlurWidth,
+          focusBlurHeight,
+        );
+        focusBlurResolution.set(focusBlurWidth, focusBlurHeight);
+        (
+          focusPipeline.blurHorizontalMaterial.uniforms.uTexelStep
+            .value as THREE.Vector2
+        ).set(focusControlsRef.current.blur / focusBlurWidth, 0);
+        (
+          focusPipeline.blurVerticalMaterial.uniforms.uTexelStep
+            .value as THREE.Vector2
+        ).set(0, focusControlsRef.current.blur / focusBlurHeight);
+        (
+          focusPipeline.compositeUniforms.uResolution
+            .value as THREE.Vector2
+        ).set(width, height);
+      }
       const backgroundScale = width < 780 ? 0.48 : 0.62;
       const backgroundWidth = Math.max(
         1,
@@ -3758,30 +4215,33 @@ export function FlagStudio() {
         focusAmountTarget,
         focusFade,
       );
-      (
-        focusCompositeUniforms.uFocusCenter.value as THREE.Vector2
-      ).copy(focusPointer);
-      focusCompositeUniforms.uFocusAmount.value = focusAmount;
-      focusCompositeUniforms.uFocusRadius.value =
-        currentFocusControls.radius;
-      focusCompositeUniforms.uFocusFeather.value =
-        currentFocusControls.feather;
-      (
-        focusBlurHorizontalMaterial.uniforms.uTexelStep
-          .value as THREE.Vector2
-      ).set(
-        currentFocusControls.blur /
-          Math.max(focusBlurResolution.x, 1),
-        0,
-      );
-      (
-        focusBlurVerticalMaterial.uniforms.uTexelStep
-          .value as THREE.Vector2
-      ).set(
-        0,
-        currentFocusControls.blur /
-          Math.max(focusBlurResolution.y, 1),
-      );
+      if (focusPipeline) {
+        (
+          focusPipeline.compositeUniforms.uFocusCenter
+            .value as THREE.Vector2
+        ).copy(focusPointer);
+        focusPipeline.compositeUniforms.uFocusAmount.value = focusAmount;
+        focusPipeline.compositeUniforms.uFocusRadius.value =
+          currentFocusControls.radius;
+        focusPipeline.compositeUniforms.uFocusFeather.value =
+          currentFocusControls.feather;
+        (
+          focusPipeline.blurHorizontalMaterial.uniforms.uTexelStep
+            .value as THREE.Vector2
+        ).set(
+          currentFocusControls.blur /
+            Math.max(focusBlurResolution.x, 1),
+          0,
+        );
+        (
+          focusPipeline.blurVerticalMaterial.uniforms.uTexelStep
+            .value as THREE.Vector2
+        ).set(
+          0,
+          currentFocusControls.blur /
+            Math.max(focusBlurResolution.y, 1),
+        );
+      }
       const baseFlagRotationY = usesPortraitCloth ? -0.08 : -0.12;
       flag.rotation.y = THREE.MathUtils.lerp(
         flag.rotation.y,
@@ -3806,33 +4266,42 @@ export function FlagStudio() {
         backgroundNeedsRender = false;
       }
 
-      renderer.setRenderTarget(focusSceneRenderTarget);
-      renderer.clear(true, true, true);
-      renderer.render(
-        backgroundCompositeScene,
-        backgroundCamera,
-      );
-      renderer.clearDepth();
-      renderer.render(scene, camera);
+      if (focusPipeline && focusAmount > 0.001) {
+        renderer.setRenderTarget(focusPipeline.sceneRenderTarget);
+        renderer.clear(true, true, true);
+        renderer.render(
+          backgroundCompositeScene,
+          backgroundCamera,
+        );
+        renderer.clearDepth();
+        renderer.render(scene, camera);
 
-      if (focusAmount > 0.001) {
-        renderer.setRenderTarget(focusBlurHorizontalTarget);
+        renderer.setRenderTarget(focusPipeline.blurHorizontalTarget);
         renderer.clear(true, true, true);
         renderer.render(
-          focusBlurHorizontalScene,
+          focusPipeline.blurHorizontalScene,
           backgroundCamera,
         );
-        renderer.setRenderTarget(focusBlurVerticalTarget);
+        renderer.setRenderTarget(focusPipeline.blurVerticalTarget);
         renderer.clear(true, true, true);
         renderer.render(
-          focusBlurVerticalScene,
+          focusPipeline.blurVerticalScene,
           backgroundCamera,
         );
+
+        renderer.setRenderTarget(null);
+        renderer.clear(true, true, true);
+        renderer.render(focusPipeline.compositeScene, backgroundCamera);
+      } else {
+        renderer.setRenderTarget(null);
+        renderer.clear(true, true, true);
+        renderer.render(
+          backgroundCompositeScene,
+          backgroundCamera,
+        );
+        renderer.clearDepth();
+        renderer.render(scene, camera);
       }
-
-      renderer.setRenderTarget(null);
-      renderer.clear(true, true, true);
-      renderer.render(focusCompositeScene, backgroundCamera);
       if (!hasRendered) {
         hasRendered = true;
         completeLoading();
@@ -3884,18 +4353,21 @@ export function FlagStudio() {
       frontMaterial.dispose();
       backMaterial.dispose();
       edgeMaterial.dispose();
+      shadowMaterials.forEach((material) => material.dispose());
       backgroundGeometry.dispose();
       backgroundMaterial.dispose();
       backgroundCompositeGeometry.dispose();
       backgroundCompositeMaterial.dispose();
       backgroundRenderTarget.dispose();
-      focusSceneRenderTarget.dispose();
-      focusBlurHorizontalTarget.dispose();
-      focusBlurVerticalTarget.dispose();
-      postProcessGeometry.dispose();
-      focusBlurHorizontalMaterial.dispose();
-      focusBlurVerticalMaterial.dispose();
-      focusCompositeMaterial.dispose();
+      if (focusPipeline) {
+        focusPipeline.sceneRenderTarget.dispose();
+        focusPipeline.blurHorizontalTarget.dispose();
+        focusPipeline.blurVerticalTarget.dispose();
+        focusPipeline.geometry.dispose();
+        focusPipeline.blurHorizontalMaterial.dispose();
+        focusPipeline.blurVerticalMaterial.dispose();
+        focusPipeline.compositeMaterial.dispose();
+      }
       artworkTexture.dispose();
       previousArtworkTexture.dispose();
       renderer.dispose();
@@ -3972,6 +4444,7 @@ export function FlagStudio() {
     uniforms.uNormalStrength.value = materialSettings.normalStrength;
     uniforms.uBumpStrength.value = materialSettings.bumpStrength;
     uniforms.uRoughness.value = materialSettings.roughness;
+    uniforms.uSheenIntensity.value = materialSettings.sheenIntensity;
   }, [materialSettings]);
 
   useEffect(() => {
@@ -3979,6 +4452,8 @@ export function FlagStudio() {
     if (!uniforms) return;
     uniforms.uAmbientIntensity.value = lighting.ambient;
     uniforms.uKeyIntensity.value = lighting.keyIntensity;
+    uniforms.uFillIntensity.value = lighting.fillIntensity;
+    uniforms.uShadowIntensity.value = lighting.shadowIntensity;
     uniforms.uLightX.value = lighting.horizontal;
     uniforms.uLightY.value = lighting.vertical;
     uniforms.uLightZ.value = lighting.depth;
@@ -4081,6 +4556,56 @@ export function FlagStudio() {
         [key]: value,
       }));
     };
+
+  const applyMood = (mood: MoodPreset) => {
+    const nextWind = { ...mood.wind };
+    const nextMaterial = { ...mood.material };
+    const nextLighting = { ...mood.lighting };
+    const nextBackground = { ...mood.background };
+    const settingsKey = activeDesign ?? "custom";
+
+    windRef.current = nextWind;
+    setWind(nextWind);
+    setMaterialSettings(nextMaterial);
+    setLighting(nextLighting);
+    backgroundSettingsByDesignRef.current[settingsKey] = nextBackground;
+    setBackgroundSettings(nextBackground);
+    backgroundParametersRef.current(nextBackground);
+    clothAudioRef.current = { motion: 0, impact: 0 };
+    simulationResetRef.current();
+    setAppliedMoodId(mood.id);
+    setMoodEditorOpen(false);
+  };
+
+  const saveCurrentMood = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = moodNameDraft.trim();
+    if (!name) return;
+
+    const mood: MoodPreset = {
+      id: `custom-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`,
+      name: name.slice(0, 18),
+      accent: color,
+      custom: true,
+      wind: { ...wind },
+      material: { ...materialSettings },
+      lighting: { ...lighting },
+      background: { ...backgroundSettings },
+    };
+    setCustomMoods((current) => [...current, mood]);
+    setAppliedMoodId(mood.id);
+    setMoodNameDraft("");
+    setMoodEditorOpen(false);
+  };
+
+  const removeCustomMood = (moodId: string) => {
+    setCustomMoods((current) =>
+      current.filter((mood) => mood.id !== moodId),
+    );
+    if (activeMoodId === moodId) setAppliedMoodId(null);
+  };
 
   const togglePause = () => {
     pauseRef.current = !paused;
@@ -4932,6 +5457,11 @@ export function FlagStudio() {
     setTornMode(false);
     setPremiereLightsEnabled(true);
     setColor(selectedDesign.color);
+    setAppliedMoodId(
+      selectedDesign.id === INITIAL_DESIGN.id ? "editorial" : null,
+    );
+    setMoodEditorOpen(false);
+    setMoodNameDraft("");
     pauseRef.current = false;
     clothAudioRef.current = { motion: 0, impact: 0 };
     setPaused(false);
@@ -5127,6 +5657,95 @@ export function FlagStudio() {
           </div>
         </div>
 
+        <section
+          className={`mood-sidebar ${moodEditorOpen ? "is-editing" : ""}`}
+          aria-label="Moods de escena"
+        >
+          <div className="mood-sidebar-bar">
+            <span className="mood-sidebar-label">MOODS</span>
+            <div className="mood-options" role="group" aria-label="Moods">
+              {allMoods.map((mood) => (
+                <div
+                  className={`mood-option ${
+                    mood.custom ? "is-custom" : ""
+                  }`}
+                  key={mood.id}
+                >
+                  <button
+                    className={`mood-button ${
+                      activeMoodId === mood.id ? "is-active" : ""
+                    }`}
+                    type="button"
+                    aria-pressed={activeMoodId === mood.id}
+                    onClick={() => applyMood(mood)}
+                    style={
+                      {
+                        "--mood-accent": mood.accent,
+                      } as React.CSSProperties
+                    }
+                  >
+                    <span className="mood-dot" aria-hidden="true" />
+                    <span>{mood.name}</span>
+                  </button>
+                  {mood.custom && (
+                    <button
+                      className="mood-delete"
+                      type="button"
+                      aria-label={`Eliminar mood ${mood.name}`}
+                      onClick={() => removeCustomMood(mood.id)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              className="mood-create"
+              type="button"
+              aria-label="Guardar mood actual"
+              aria-expanded={moodEditorOpen}
+              onClick={() => {
+                setMoodEditorOpen((current) => !current);
+                setMoodNameDraft("");
+              }}
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+          </div>
+
+          {moodEditorOpen && (
+            <form className="mood-editor" onSubmit={saveCurrentMood}>
+              <input
+                type="text"
+                value={moodNameDraft}
+                maxLength={18}
+                autoFocus
+                aria-label="Nombre del nuevo mood"
+                placeholder="Nombre del mood"
+                onChange={(event) => setMoodNameDraft(event.target.value)}
+              />
+              <button
+                className="mood-save"
+                type="submit"
+                disabled={!moodNameDraft.trim()}
+              >
+                Guardar
+              </button>
+              <button
+                className="mood-cancel"
+                type="button"
+                onClick={() => {
+                  setMoodEditorOpen(false);
+                  setMoodNameDraft("");
+                }}
+              >
+                Cancelar
+              </button>
+            </form>
+          )}
+        </section>
+
         <div
           className="control-tabs"
           role="tablist"
@@ -5136,8 +5755,10 @@ export function FlagStudio() {
             id="motion-tab"
             type="button"
             role="tab"
+            aria-label="Movimiento"
             aria-selected={activeControlTab === "motion"}
             aria-controls="motion-panel"
+            data-tooltip="Movimiento"
             className={activeControlTab === "motion" ? "is-active" : ""}
             onClick={() => setActiveControlTab("motion")}
           >
@@ -5148,8 +5769,10 @@ export function FlagStudio() {
             id="sound-tab"
             type="button"
             role="tab"
+            aria-label="Sonido"
             aria-selected={activeControlTab === "sound"}
             aria-controls="sound-panel"
+            data-tooltip="Sonido"
             className={activeControlTab === "sound" ? "is-active" : ""}
             onClick={() => setActiveControlTab("sound")}
           >
@@ -5160,8 +5783,10 @@ export function FlagStudio() {
             id="grab-tab"
             type="button"
             role="tab"
+            aria-label="Agarre"
             aria-selected={activeControlTab === "grab"}
             aria-controls="grab-panel"
+            data-tooltip="Agarre"
             className={activeControlTab === "grab" ? "is-active" : ""}
             onClick={() => setActiveControlTab("grab")}
           >
@@ -5172,8 +5797,10 @@ export function FlagStudio() {
             id="material-tab"
             type="button"
             role="tab"
+            aria-label="Material"
             aria-selected={activeControlTab === "material"}
             aria-controls="material-panel"
+            data-tooltip="Material"
             className={activeControlTab === "material" ? "is-active" : ""}
             onClick={() => setActiveControlTab("material")}
           >
@@ -5184,8 +5811,10 @@ export function FlagStudio() {
             id="lighting-tab"
             type="button"
             role="tab"
+            aria-label="Luz"
             aria-selected={activeControlTab === "lighting"}
             aria-controls="lighting-panel"
+            data-tooltip="Luz"
             className={activeControlTab === "lighting" ? "is-active" : ""}
             onClick={() => setActiveControlTab("lighting")}
           >
@@ -5196,8 +5825,10 @@ export function FlagStudio() {
             id="background-tab"
             type="button"
             role="tab"
+            aria-label="Fondo"
             aria-selected={activeControlTab === "background"}
             aria-controls="background-panel"
+            data-tooltip="Fondo"
             className={
               activeControlTab === "background" ? "is-active" : ""
             }
@@ -5210,8 +5841,10 @@ export function FlagStudio() {
             id="artwork-tab"
             type="button"
             role="tab"
+            aria-label="Gráfica"
             aria-selected={activeControlTab === "artwork"}
             aria-controls="artwork-panel"
+            data-tooltip="Gráfica"
             className={activeControlTab === "artwork" ? "is-active" : ""}
             onClick={() => setActiveControlTab("artwork")}
           >
@@ -5222,8 +5855,10 @@ export function FlagStudio() {
             id="focus-tab"
             type="button"
             role="tab"
+            aria-label="Foco"
             aria-selected={activeControlTab === "focus"}
             aria-controls="focus-panel"
+            data-tooltip="Foco"
             className={activeControlTab === "focus" ? "is-active" : ""}
             onClick={() => setActiveControlTab("focus")}
           >
@@ -5625,7 +6260,7 @@ export function FlagStudio() {
                 label="Escala de trama"
                 value={materialSettings.scale}
                 min={0.35}
-                max={2.5}
+                max={10}
                 step={0.01}
                 display={`${materialSettings.scale.toFixed(2)}×`}
                 onChange={updateMaterial("scale")}
@@ -5656,6 +6291,15 @@ export function FlagStudio() {
                 step={0.01}
                 display={`${Math.round(materialSettings.roughness * 100)}%`}
                 onChange={updateMaterial("roughness")}
+              />
+              <Control
+                label="Brillo de fibra"
+                value={materialSettings.sheenIntensity}
+                min={0}
+                max={1.5}
+                step={0.01}
+                display={`${Math.round((materialSettings.sheenIntensity / 1.5) * 100)}%`}
+                onChange={updateMaterial("sheenIntensity")}
               />
             </div>
           </div>
@@ -5745,6 +6389,15 @@ export function FlagStudio() {
             onChange={updateLighting("keyIntensity")}
           />
           <Control
+            label="Luz de relleno"
+            value={lighting.fillIntensity}
+            min={0}
+            max={1}
+            step={0.01}
+            display={`${Math.round(lighting.fillIntensity * 100)}%`}
+            onChange={updateLighting("fillIntensity")}
+          />
+          <Control
             label="Posición horizontal"
             value={lighting.horizontal}
             min={-1.5}
@@ -5779,6 +6432,15 @@ export function FlagStudio() {
             step={0.01}
             display={`${Math.round((lighting.rimIntensity / 1.5) * 100)}%`}
             onChange={updateLighting("rimIntensity")}
+          />
+          <Control
+            label="Sombra de tela"
+            value={lighting.shadowIntensity}
+            min={0}
+            max={1}
+            step={0.01}
+            display={`${Math.round(lighting.shadowIntensity * 100)}%`}
+            onChange={updateLighting("shadowIntensity")}
           />
           <div className="light-color-control">
             <div>

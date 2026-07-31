@@ -6,6 +6,7 @@
   --line: rgba(255, 255, 255, 0.11);
   --accent: #ff5b3d;
   --background: #080809;
+  --font-rounded: "Nunito", Arial, sans-serif;
 }
 
 * {
@@ -28,7 +29,7 @@ body {
 
 body {
   color: var(--ink);
-  font-family: var(--font-geist-sans), Arial, sans-serif;
+  font-family: var(--font-rounded);
 }
 
 button,
@@ -554,6 +555,207 @@ button {
   cursor: grabbing;
 }
 
+.mood-sidebar {
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mood-sidebar-bar {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mood-sidebar-label {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.48);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+
+.mood-options {
+  order: 3;
+  display: grid;
+  width: 100%;
+  flex: 1 0 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  gap: 4px;
+}
+
+.mood-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.mood-option.is-custom {
+  padding-right: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
+
+.mood-button {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.mood-button:hover,
+.mood-button:focus-visible {
+  color: var(--ink);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.mood-button.is-active {
+  border-color: color-mix(
+    in srgb,
+    var(--mood-accent) 38%,
+    rgba(255, 255, 255, 0.1)
+  );
+  background: color-mix(
+    in srgb,
+    var(--mood-accent) 12%,
+    rgba(255, 255, 255, 0.035)
+  );
+  color: var(--ink);
+}
+
+.mood-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--mood-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--mood-accent) 48%, transparent);
+}
+
+.mood-delete,
+.mood-create {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.42);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.mood-delete {
+  width: 22px;
+  height: 22px;
+  margin-left: -5px;
+  font-size: 14px;
+}
+
+.mood-create {
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  font-size: 18px;
+}
+
+.mood-delete:hover,
+.mood-delete:focus-visible,
+.mood-create:hover,
+.mood-create:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  outline: none;
+  transform: scale(1.06);
+}
+
+.mood-editor {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(10, 10, 11, 0.86);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.mood-editor input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.mood-editor input:focus {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.mood-save,
+.mood-cancel {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.mood-save {
+  background: var(--ink);
+  color: #111113;
+}
+
+.mood-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.mood-save:focus-visible,
+.mood-cancel:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
 .controls {
   position: absolute;
   top: 0;
@@ -651,11 +853,11 @@ button {
   padding: 12px 2px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: rgba(16, 16, 17, 0.94);
-  backdrop-filter: blur(18px);
+  background: transparent;
 }
 
 .control-tabs button {
+  position: relative;
   display: grid;
   place-items: center;
   justify-self: center;
@@ -674,6 +876,62 @@ button {
     color 180ms ease,
     border-color 180ms ease,
     background 180ms ease;
+}
+
+.control-tabs button::after {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 50%;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(7, 7, 8, 0.94);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  content: attr(data-tooltip);
+  font-family: var(--font-rounded);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -3px) scale(0.96);
+  transform-origin: top center;
+  transition:
+    opacity 140ms ease,
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 140ms ease;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.control-tabs button:first-child::after {
+  left: -2px;
+  transform: translate(0, -3px) scale(0.96);
+  transform-origin: top left;
+}
+
+.control-tabs button:last-child::after {
+  right: -2px;
+  left: auto;
+  transform: translate(0, -3px) scale(0.96);
+  transform-origin: top right;
+}
+
+.control-tabs button:hover::after,
+.control-tabs button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  visibility: visible;
+}
+
+.control-tabs button:first-child:hover::after,
+.control-tabs button:first-child:focus-visible::after,
+.control-tabs button:last-child:hover::after,
+.control-tabs button:last-child:focus-visible::after {
+  transform: translate(0, 0) scale(1);
 }
 
 .control-tabs button:hover {
@@ -1421,6 +1679,10 @@ input[type="range"]::-moz-range-thumb {
 
   .flag-canvas {
     touch-action: none;
+  }
+
+  .mood-sidebar {
+    margin-bottom: 12px;
   }
 
   .controls {
