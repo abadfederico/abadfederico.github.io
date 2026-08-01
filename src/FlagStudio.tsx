@@ -226,6 +226,9 @@ const MOBILE_PORTRAIT_WIDTH_SCALE = 0.72;
 const MOBILE_ARTWORK_SCALE_MULTIPLIER = 1.45;
 const MOBILE_ARTWORK_VERTICAL_OFFSET = -0.06;
 const FOCUS_BLUR_SCALE = 0.45;
+const SHADOW_BLUR_SCALE_MOBILE = 0.24;
+const SHADOW_BLUR_SCALE_DESKTOP = 0.32;
+const SHADOW_BLUR_RADIUS = 2.4;
 
 const INITIAL_FOCUS: FocusControls = {
   enabled: false,
@@ -1204,7 +1207,7 @@ const edgeFragmentShader = /* glsl */ `
         diffuse * 0.34 * uKeyIntensity +
         fillDiffuse * uFillIntensity * 0.24
       );
-    vec3 edgeColor = uColor * edgeLighting;
+    vec3 edgeColor = uColor * max(edgeLighting, vec3(0.18));
     gl_FragColor = vec4(edgeColor, 1.0);
     #include <colorspace_fragment>
   }
@@ -1232,16 +1235,23 @@ const clothShadowVertexShader = /* glsl */ `
 `;
 
 const clothShadowFragmentShader = /* glsl */ `
+  void main() {
+    gl_FragColor = vec4(1.0);
+  }
+`;
+
+const clothShadowCompositeFragmentShader = /* glsl */ `
+  precision highp float;
+
+  varying vec2 vUv;
+  uniform sampler2D uShadowTexture;
   uniform vec3 uShadowColor;
   uniform float uShadowIntensity;
-  uniform float uLayerOpacity;
 
   void main() {
-    gl_FragColor = vec4(
-      uShadowColor,
-      uShadowIntensity * uLayerOpacity
-    );
-    #include <colorspace_fragment>
+    float mask = texture2D(uShadowTexture, vUv).a;
+    float opacity = mask * uShadowIntensity * 0.5;
+    gl_FragColor = vec4(uShadowColor, opacity);
   }
 `;
 
@@ -1733,13 +1743,68 @@ function createClothSimulation(
 
   const index = (column: number, row: number) => row * rowLength + column;
   const hangsFromTop = layout.anchor === "top";
-  const pinnedVertices = hangsFromTop
-    ? [index(0, 0), index(columns, 0)]
-    : [index(0, 0), index(0, rows)];
+  const anchorVertexCount = hangsFromTop ? columns + 1 : rows + 1;
+  const hardPinVertexCount = Math.max(
+    2,
+    Math.round(anchorVertexCount * 0.07),
+  );
+  const softPinVertexCount = Math.max(
+    2,
+    Math.round(anchorVertexCount * 0.06),
+  );
+  const pinnedVertices: number[] = [];
+  const softPinnedVertices: { particle: number; strength: number }[] = [];
+
+  for (let anchorIndex = 0; anchorIndex < anchorVertexCount; anchorIndex += 1) {
+    const distanceFromNearestPin = Math.min(
+      anchorIndex,
+      anchorVertexCount - 1 - anchorIndex,
+    );
+    const particle = hangsFromTop
+      ? index(anchorIndex, 0)
+      : index(0, anchorIndex);
+
+    if (distanceFromNearestPin < hardPinVertexCount) {
+      pinnedVertices.push(particle);
+      continue;
+    }
+
+    const softPinIndex = distanceFromNearestPin - hardPinVertexCount;
+    if (softPinIndex < softPinVertexCount) {
+      const progress =
+        (softPinIndex + 1) / (softPinVertexCount + 1);
+      softPinnedVertices.push({
+        particle,
+        strength: Math.pow(1 - progress, 1.35),
+      });
+    }
+  }
 
   for (const particle of pinnedVertices) {
     pinned[particle] = 1;
   }
+
+  const applySoftPinConstraints = () => {
+    for (const { particle, strength } of softPinnedVertices) {
+      const particle3 = particle * 3;
+      const stiffness = strength * 0.18;
+      const correctionX =
+        (restPositions[particle3] - positions[particle3]) * stiffness;
+      const correctionY =
+        (restPositions[particle3 + 1] - positions[particle3 + 1]) *
+        stiffness;
+      const correctionZ =
+        (restPositions[particle3 + 2] - positions[particle3 + 2]) *
+        stiffness;
+
+      positions[particle3] += correctionX;
+      positions[particle3 + 1] += correctionY;
+      positions[particle3 + 2] += correctionZ;
+      previousPositions[particle3] += correctionX * 0.9;
+      previousPositions[particle3 + 1] += correctionY * 0.9;
+      previousPositions[particle3 + 2] += correctionZ * 0.9;
+    }
+  };
 
   const addConstraint = (
     a: number,
@@ -2246,6 +2311,7 @@ function createClothSimulation(
         positions[pinnedVertex + 1] = restPositions[pinnedVertex + 1];
         positions[pinnedVertex + 2] = restPositions[pinnedVertex + 2];
       }
+      applySoftPinConstraints();
       maximumGrabStress = Math.max(
         maximumGrabStress,
         applyGrabConstraint(),
@@ -2283,6 +2349,7 @@ function createClothSimulation(
           ? 2
           : 3;
     solveConstraints();
+    applySoftPinConstraints();
     maximumGrabStress = Math.max(
       maximumGrabStress,
       applyGrabConstraint(),
@@ -3050,6 +3117,7 @@ export function FlagStudio() {
       powerPreference: "high-performance",
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x000000, 0);
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
@@ -3725,39 +3793,111 @@ export function FlagStudio() {
       side: THREE.DoubleSide,
     });
 
-    const shadowLayers = [
-      { spread: 1.012, offset: 0.032, depth: 0.05, opacity: 0.32 },
-      { spread: 1.028, offset: 0.052, depth: 0.065, opacity: 0.18 },
-      { spread: 1.05, offset: 0.076, depth: 0.08, opacity: 0.1 },
-    ];
-    const shadowMaterials = shadowLayers.map(
-      (layer) =>
-        new THREE.ShaderMaterial({
-          uniforms: {
-            uFlagSize: uniforms.uFlagSize,
-            uTransitionScale: uniforms.uTransitionScale,
-            uLightX: uniforms.uLightX,
-            uLightY: uniforms.uLightY,
-            uShadowSpread: { value: layer.spread },
-            uShadowOffset: { value: layer.offset },
-            uShadowDepth: { value: layer.depth },
-            uShadowColor: { value: new THREE.Color("#030208") },
-            uShadowIntensity: uniforms.uShadowIntensity,
-            uLayerOpacity: { value: layer.opacity },
-          },
-          vertexShader: clothShadowVertexShader,
-          fragmentShader: clothShadowFragmentShader,
-          side: THREE.DoubleSide,
-          transparent: true,
-          depthWrite: false,
-          toneMapped: false,
-        }),
-    );
-    const shadowSurfaces = shadowMaterials.map((material) => {
-      const surface = new THREE.Mesh(geometry, material);
-      surface.frustumCulled = false;
-      return surface;
+    const shadowMaskTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
     });
+    const shadowBlurHorizontalTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    const shadowBlurVerticalTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    shadowMaskTarget.texture.generateMipmaps = false;
+    shadowBlurHorizontalTarget.texture.generateMipmaps = false;
+    shadowBlurVerticalTarget.texture.generateMipmaps = false;
+
+    const shadowMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uFlagSize: uniforms.uFlagSize,
+        uTransitionScale: uniforms.uTransitionScale,
+        uLightX: uniforms.uLightX,
+        uLightY: uniforms.uLightY,
+        uShadowSpread: { value: 1.01 },
+        uShadowOffset: { value: 0.032 },
+        uShadowDepth: { value: 0.05 },
+      },
+      vertexShader: clothShadowVertexShader,
+      fragmentShader: clothShadowFragmentShader,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const shadowSurface = new THREE.Mesh(geometry, shadowMaterial);
+    shadowSurface.frustumCulled = false;
+    const shadowGroup = new THREE.Group();
+    shadowGroup.add(shadowSurface);
+    const shadowScene = new THREE.Scene();
+    shadowScene.add(shadowGroup);
+
+    const shadowPostGeometry = new THREE.PlaneGeometry(2, 2);
+    const shadowBlurHorizontalScene = new THREE.Scene();
+    const shadowBlurHorizontalMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: { value: shadowMaskTarget.texture },
+        uTexelStep: { value: new THREE.Vector2(1, 0) },
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: focusBlurFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const shadowBlurHorizontalMesh = new THREE.Mesh(
+      shadowPostGeometry,
+      shadowBlurHorizontalMaterial,
+    );
+    shadowBlurHorizontalMesh.frustumCulled = false;
+    shadowBlurHorizontalScene.add(shadowBlurHorizontalMesh);
+
+    const shadowBlurVerticalScene = new THREE.Scene();
+    const shadowBlurVerticalMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: { value: shadowBlurHorizontalTarget.texture },
+        uTexelStep: { value: new THREE.Vector2(0, 1) },
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: focusBlurFragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const shadowBlurVerticalMesh = new THREE.Mesh(
+      shadowPostGeometry,
+      shadowBlurVerticalMaterial,
+    );
+    shadowBlurVerticalMesh.frustumCulled = false;
+    shadowBlurVerticalScene.add(shadowBlurVerticalMesh);
+
+    const shadowCompositeScene = new THREE.Scene();
+    const shadowCompositeMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uShadowTexture: { value: shadowBlurVerticalTarget.texture },
+        uShadowColor: { value: new THREE.Color("#030208") },
+        uShadowIntensity: uniforms.uShadowIntensity,
+      },
+      vertexShader: proceduralBackgroundVertexShader,
+      fragmentShader: clothShadowCompositeFragmentShader,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const shadowCompositeMesh = new THREE.Mesh(
+      shadowPostGeometry,
+      shadowCompositeMaterial,
+    );
+    shadowCompositeMesh.frustumCulled = false;
+    shadowCompositeScene.add(shadowCompositeMesh);
 
     const flag = new THREE.Group();
     const frontSurface = new THREE.Mesh(geometry, frontMaterial);
@@ -3769,7 +3909,7 @@ export function FlagStudio() {
     frontSurface.frustumCulled = false;
     backSurface.frustumCulled = false;
     edgeSurface.frustumCulled = false;
-    flag.add(...shadowSurfaces, frontSurface, backSurface, edgeSurface);
+    flag.add(frontSurface, backSurface, edgeSurface);
     flag.rotation.x = -0.025;
     flag.rotation.y = usesPortraitCloth ? -0.08 : -0.12;
     flag.position.y = usesPortraitCloth ? -0.04 : 0;
@@ -3832,6 +3972,35 @@ export function FlagStudio() {
       renderer.setSize(width, height, false);
       renderer.getDrawingBufferSize(drawingBufferSize);
       uniforms.uViewport.value.copy(drawingBufferSize);
+      const shadowBlurScale =
+        width < 780
+          ? SHADOW_BLUR_SCALE_MOBILE
+          : SHADOW_BLUR_SCALE_DESKTOP;
+      const shadowBlurWidth = Math.max(
+        1,
+        Math.round(drawingBufferSize.x * shadowBlurScale),
+      );
+      const shadowBlurHeight = Math.max(
+        1,
+        Math.round(drawingBufferSize.y * shadowBlurScale),
+      );
+      shadowMaskTarget.setSize(shadowBlurWidth, shadowBlurHeight);
+      shadowBlurHorizontalTarget.setSize(
+        shadowBlurWidth,
+        shadowBlurHeight,
+      );
+      shadowBlurVerticalTarget.setSize(
+        shadowBlurWidth,
+        shadowBlurHeight,
+      );
+      (
+        shadowBlurHorizontalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(SHADOW_BLUR_RADIUS / shadowBlurWidth, 0);
+      (
+        shadowBlurVerticalMaterial.uniforms.uTexelStep
+          .value as THREE.Vector2
+      ).set(0, SHADOW_BLUR_RADIUS / shadowBlurHeight);
       if (focusPipeline) {
         const focusBlurWidth = Math.max(
           1,
@@ -4266,6 +4435,29 @@ export function FlagStudio() {
         backgroundNeedsRender = false;
       }
 
+      shadowGroup.position.copy(flag.position);
+      shadowGroup.rotation.copy(flag.rotation);
+      shadowGroup.scale.copy(flag.scale);
+      renderer.setRenderTarget(shadowMaskTarget);
+      renderer.clear(true, true, true);
+      renderer.render(shadowScene, camera);
+      shadowBlurHorizontalMaterial.uniforms.uTexture.value =
+        shadowMaskTarget.texture;
+      renderer.setRenderTarget(shadowBlurHorizontalTarget);
+      renderer.clear(true, true, true);
+      renderer.render(shadowBlurHorizontalScene, backgroundCamera);
+      renderer.setRenderTarget(shadowBlurVerticalTarget);
+      renderer.clear(true, true, true);
+      renderer.render(shadowBlurVerticalScene, backgroundCamera);
+      shadowBlurHorizontalMaterial.uniforms.uTexture.value =
+        shadowBlurVerticalTarget.texture;
+      renderer.setRenderTarget(shadowBlurHorizontalTarget);
+      renderer.clear(true, true, true);
+      renderer.render(shadowBlurHorizontalScene, backgroundCamera);
+      renderer.setRenderTarget(shadowBlurVerticalTarget);
+      renderer.clear(true, true, true);
+      renderer.render(shadowBlurVerticalScene, backgroundCamera);
+
       if (focusPipeline && focusAmount > 0.001) {
         renderer.setRenderTarget(focusPipeline.sceneRenderTarget);
         renderer.clear(true, true, true);
@@ -4273,6 +4465,7 @@ export function FlagStudio() {
           backgroundCompositeScene,
           backgroundCamera,
         );
+        renderer.render(shadowCompositeScene, backgroundCamera);
         renderer.clearDepth();
         renderer.render(scene, camera);
 
@@ -4299,6 +4492,7 @@ export function FlagStudio() {
           backgroundCompositeScene,
           backgroundCamera,
         );
+        renderer.render(shadowCompositeScene, backgroundCamera);
         renderer.clearDepth();
         renderer.render(scene, camera);
       }
@@ -4353,7 +4547,14 @@ export function FlagStudio() {
       frontMaterial.dispose();
       backMaterial.dispose();
       edgeMaterial.dispose();
-      shadowMaterials.forEach((material) => material.dispose());
+      shadowMaterial.dispose();
+      shadowPostGeometry.dispose();
+      shadowBlurHorizontalMaterial.dispose();
+      shadowBlurVerticalMaterial.dispose();
+      shadowCompositeMaterial.dispose();
+      shadowMaskTarget.dispose();
+      shadowBlurHorizontalTarget.dispose();
+      shadowBlurVerticalTarget.dispose();
       backgroundGeometry.dispose();
       backgroundMaterial.dispose();
       backgroundCompositeGeometry.dispose();
