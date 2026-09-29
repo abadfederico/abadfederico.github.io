@@ -7,6 +7,45 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <meta name="theme-color" content="#100b21" />
+    <style>
+      html, body { margin: 0; background: #070708; }
+      .stage-loader {
+        position: absolute;
+        z-index: 5;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #070708;
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 480ms ease, visibility 0s;
+      }
+      .stage-loader.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 480ms ease, visibility 0s linear 480ms;
+      }
+      .stage-loader.is-hidden .loader-pulse {
+        animation-play-state: paused;
+      }
+      .loader-pulse {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--loader-color, #614ad9);
+        box-shadow: 0 0 14px color-mix(in srgb, var(--loader-color, #614ad9) 48%, transparent);
+        animation: loader-pulse 1s ease-in-out infinite alternate;
+      }
+      @keyframes loader-pulse {
+        from { opacity: 0.28; transform: scale(0.72); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .stage-loader, .loader-pulse { animation: none; transition: none; }
+        .stage-loader.is-hidden { transition: none; }
+      }
+    </style>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
       name="apple-mobile-web-app-status-bar-style"
@@ -14,14 +53,17 @@
     />
     <meta
       name="description"
-      content="Abad * Human"
+      content="Abad * Human — un estudio interactivo de banderas, materiales y movimiento."
     />
     <meta property="og:title" content="Abad * Human" />
     <meta
       property="og:description"
-      content="Abad * Human"
+      content="Abad * Human — un estudio interactivo de banderas, materiales y movimiento."
     />
-    <meta property="og:image" content="/og.png" />
+    <meta property="og:image" content="https://abadfederi.co/og.png" />
+    <meta property="og:url" content="https://abadfederi.co/" />
+    <meta property="og:type" content="website" />
+    <link rel="canonical" href="https://abadfederi.co/" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -34,7 +76,15 @@
     <title>Abad * Human</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="stage-loader" role="status" aria-live="polite" aria-label="Cargando bandera">
+        <span class="loader-pulse" aria-hidden="true"></span>
+      </div>
+    </div>
+    <noscript>
+      <style>.stage-loader { display: none; }</style>
+      <p style="color:#f4f1e9;font-family:system-ui;padding:24px">Abad * Human: banderas, materiales y movimiento. Activá JavaScript para explorar la escena interactiva.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

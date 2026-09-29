@@ -10,7 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit --incremental false",
-    "lint": "eslint src vite.config.ts"
+    "lint": "eslint src vite.config.ts",
+    "test": "node --import ./scripts/register.mjs --test tests/*.test.ts",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "react": "19.2.8",

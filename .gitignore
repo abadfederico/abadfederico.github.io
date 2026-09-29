@@ -31,3 +31,19 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
+
+# local documentation, reports and agent settings
+*.md
+!/README.md
+!/LICENSE.md
+!/NOTICE.md
+/docs/
+/reports/
+/notes/
+/screenshots/
+/auditoria-bandera/
+/.codex/
+/.agents/
+/.claude/
+/scripts/benchmark*
+/.local/

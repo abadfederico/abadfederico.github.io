@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check types, lint and physics invariants
+        run: npm run typecheck && npm run lint && npm test
+
       - name: Build static site
         run: npm run build
 

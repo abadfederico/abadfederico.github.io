@@ -1,7 +1,8 @@
 import {
   ChangeEvent,
+  lazy,
+  Suspense,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -15,2660 +16,79 @@ import {
   type ProceduralBackgroundPalette,
 } from "./proceduralBackground";
 
-type WindControls = {
-  strength: number;
-  turbulence: number;
-  direction: number;
-  speed: number;
-  gravity: number;
-  gustiness: number;
-};
-
-type MaterialControls = {
-  preset: number;
-  scale: number;
-  thickness: number;
-  normalStrength: number;
-  bumpStrength: number;
-  roughness: number;
-  sheenIntensity: number;
-};
-
-type GrabControls = {
-  resistance: number;
-  radius: number;
-  activationDistance: number;
-  inertia: number;
-};
-
-type LightingControls = {
-  ambient: number;
-  keyIntensity: number;
-  fillIntensity: number;
-  shadowIntensity: number;
-  horizontal: number;
-  vertical: number;
-  depth: number;
-  rimIntensity: number;
-  color: string;
-  premiereIntensity: number;
-  premiereSpeed: number;
-};
-
-type WindSoundControls = {
-  volume: number;
-  body: number;
-  air: number;
-  gustDepth: number;
-  clothVolume: number;
-  clothRustle: number;
-  clothImpact: number;
-  clothWeight: number;
-};
-
-type ClothAudioMetrics = {
-  motion: number;
-  impact: number;
-};
-
-type ClothStepMetrics = ClothAudioMetrics & {
-  releasedGrab: boolean;
-};
-
-type TransitionOrigin = {
-  x: number;
-  y: number;
-  screenX?: number;
-  screenY?: number;
-};
-
-type ClothGrabController = {
-  begin: (
-    u: number,
-    v: number,
-    x: number,
-    y: number,
-    z: number,
-  ) => boolean;
-  move: (x: number, y: number, z: number) => void;
-  end: () => void;
-  configure: (settings: GrabControls) => void;
-};
-
-type DesignTransition = (
-  image: HTMLImageElement,
-  color: string,
-  artworkScale: number,
-  direction: number,
-  origin: TransitionOrigin,
-) => void;
-
-type WindAudioEngine = {
-  context: AudioContext;
-  source: AudioBufferSourceNode;
-  bodyFilter: BiquadFilterNode;
-  detailFilter: BiquadFilterNode;
-  gustFilter: BiquadFilterNode;
-  clothFilter: BiquadFilterNode;
-  bodyGain: GainNode;
-  detailGain: GainNode;
-  gustGain: GainNode;
-  clothGain: GainNode;
-  masterGain: GainNode;
-  panner: StereoPannerNode;
-  impactBuffer: AudioBuffer;
-  lastImpactAt: number;
-  nextImpactAt: number;
-  updateTimer: number;
-  startedAt: number;
-};
-
-type DesignPreset = {
-  id: string;
-  label: string;
-  color: string;
-  asset: string;
-  identityBackground: string;
-  background: ProceduralBackgroundPalette;
-};
-
-type BackgroundControls = Pick<
-  ProceduralBackgroundPalette,
-  "intensity" | "speed" | "warp"
->;
-
-type FocusControls = {
-  enabled: boolean;
-  radius: number;
-  feather: number;
-  blur: number;
-  follow: number;
-};
-
-type MoodSettings = {
-  wind: WindControls;
-  material: MaterialControls;
-  lighting: LightingControls;
-  background: BackgroundControls;
-};
-
-type MoodPreset = MoodSettings & {
-  id: string;
-  name: string;
-  accent: string;
-  custom?: boolean;
-};
-
-type ControlTab =
-  | "motion"
-  | "sound"
-  | "grab"
-  | "material"
-  | "lighting"
-  | "background"
-  | "focus"
-  | "artwork";
-type MeshQuality = 1 | 2 | 3 | 4;
-type TransitionMode = "logo" | "touch" | "weave" | "tear";
-type ClothAnchor = "left" | "top";
-
-type ClothLayout = {
-  width: number;
-  height: number;
-  textureWidth: number;
-  textureHeight: number;
-  anchor: ClothAnchor;
-};
-
-const INITIAL_WIND: WindControls = {
-  strength: 3.77,
-  turbulence: 8,
-  direction: 1,
-  speed: 1.2,
-  gravity: 1.34,
-  gustiness: 3,
-};
-
-const INITIAL_FLAG_SIZE = 1.2;
-const INITIAL_ARTWORK_SCALE = 0.55;
-const INITIAL_MESH_QUALITY: MeshQuality = 3;
-const INITIAL_TRANSITION_MODE: TransitionMode = "logo";
-const MAX_ARTWORK_FILE_SIZE = 10 * 1024 * 1024;
-const MAX_ARTWORK_DIMENSION = 8192;
-const ALLOWED_ARTWORK_TYPES = new Set(["image/png", "image/webp"]);
-const DEFAULT_TRANSITION_ORIGIN: TransitionOrigin = {
-  x: 0.5,
-  y: 0.5,
-  screenX: 0.5,
-  screenY: 0.5,
-};
-
-const MESH_RESOLUTIONS: Record<
-  MeshQuality,
-  { columns: number; rows: number }
-> = {
-  1: { columns: 48, rows: 28 },
-  2: { columns: 72, rows: 42 },
-  3: { columns: 96, rows: 56 },
-  4: { columns: 112, rows: 64 },
-};
-
-const LANDSCAPE_CLOTH: ClothLayout = {
-  width: 3.35,
-  height: 1.9,
-  textureWidth: 1024,
-  textureHeight: 576,
-  anchor: "left",
-};
-
-const MOBILE_PORTRAIT_HEIGHT_SCALE = 0.84;
-const MOBILE_PORTRAIT_WIDTH_SCALE = 0.72;
-const MOBILE_ARTWORK_SCALE_MULTIPLIER = 1.45;
-const MOBILE_ARTWORK_VERTICAL_OFFSET = -0.06;
-const FOCUS_BLUR_SCALE = 0.45;
-const SHADOW_BLUR_SCALE_MOBILE = 0.24;
-const SHADOW_BLUR_SCALE_DESKTOP = 0.32;
-const SHADOW_BLUR_RADIUS = 2.4;
-
-const INITIAL_FOCUS: FocusControls = {
-  enabled: false,
-  radius: 150,
-  feather: 72,
-  blur: 1.35,
-  follow: 14,
-};
-
-const PORTRAIT_CLOTH: ClothLayout = {
-  width: LANDSCAPE_CLOTH.height * MOBILE_PORTRAIT_WIDTH_SCALE,
-  height: LANDSCAPE_CLOTH.width * MOBILE_PORTRAIT_HEIGHT_SCALE,
-  textureWidth: Math.round(
-    LANDSCAPE_CLOTH.textureHeight * MOBILE_PORTRAIT_WIDTH_SCALE,
-  ),
-  textureHeight: Math.round(
-    LANDSCAPE_CLOTH.textureWidth * MOBILE_PORTRAIT_HEIGHT_SCALE,
-  ),
-  anchor: "top",
-};
-
-const MOBILE_PENNANT_POINT_HEIGHT = 0.24;
-
-const MOBILE_PORTRAIT_QUERY =
-  "(max-width: 780px) and (orientation: portrait)";
-
-const INITIAL_MATERIAL: MaterialControls = {
-  preset: 0,
-  scale: 3,
-  thickness: 0.009,
-  normalStrength: 2.23,
-  bumpStrength: 1.43,
-  roughness: 0.86,
-  sheenIntensity: 0.83,
-};
-
-const INITIAL_GRAB: GrabControls = {
-  resistance: 1,
-  radius: 0.24,
-  activationDistance: 30,
-  inertia: 0.2,
-};
-
-const INITIAL_WIND_SOUND: WindSoundControls = {
-  volume: 0.55,
-  body: 0.8,
-  air: 0.62,
-  gustDepth: 0.82,
-  clothVolume: 0.78,
-  clothRustle: 0.06,
-  clothImpact: 1.35,
-  clothWeight: 0.88,
-};
-
-const INITIAL_LIGHTING: LightingControls = {
-  ambient: 0.1,
-  keyIntensity: 1.14,
-  fillIntensity: 0.22,
-  shadowIntensity: 0.42,
-  horizontal: -0.59,
-  vertical: 0.29,
-  depth: 0.52,
-  rimIntensity: 0.55,
-  color: "#FFFFFF",
-  premiereIntensity: 1.15,
-  premiereSpeed: 1,
-};
-
-const CUSTOM_MOODS_STORAGE_KEY = "abad-human-custom-moods-v1";
-
-const DEFAULT_MOODS: MoodPreset[] = [
-  {
-    id: "calma",
-    name: "Calma",
-    accent: "#A8DADC",
-    wind: {
-      strength: 1.4,
-      turbulence: 2.4,
-      direction: 0.35,
-      speed: 0.55,
-      gravity: 1.15,
-      gustiness: 0.8,
-    },
-    material: {
-      preset: 1,
-      scale: 1.75,
-      thickness: 0.012,
-      normalStrength: 0.45,
-      bumpStrength: 0.38,
-      roughness: 1,
-      sheenIntensity: 0.35,
-    },
-    lighting: {
-      ambient: 0.18,
-      keyIntensity: 0.82,
-      fillIntensity: 0.32,
-      shadowIntensity: 0.25,
-      horizontal: -0.35,
-      vertical: 0.65,
-      depth: 1.2,
-      rimIntensity: 0.28,
-      color: "#FFF4E6",
-      premiereIntensity: 0.7,
-      premiereSpeed: 0.55,
-    },
-    background: { intensity: 0.03, speed: 0.16, warp: 0.07 },
-  },
-  {
-    id: "editorial",
-    name: "Editorial",
-    accent: "#F4F1E9",
-    wind: { ...INITIAL_WIND },
-    material: { ...INITIAL_MATERIAL },
-    lighting: { ...INITIAL_LIGHTING },
-    background: { intensity: 0.08, speed: 0.42, warp: 0.2 },
-  },
-  {
-    id: "tormenta",
-    name: "Tormenta",
-    accent: "#778CFF",
-    wind: {
-      strength: 8.2,
-      turbulence: 8,
-      direction: -0.15,
-      speed: 2.1,
-      gravity: 1.5,
-      gustiness: 3,
-    },
-    material: {
-      preset: 3,
-      scale: 1.15,
-      thickness: 0.018,
-      normalStrength: 1.05,
-      bumpStrength: 1.08,
-      roughness: 0.72,
-      sheenIntensity: 1.15,
-    },
-    lighting: {
-      ambient: 0.06,
-      keyIntensity: 1.5,
-      fillIntensity: 0.15,
-      shadowIntensity: 0.65,
-      horizontal: -0.95,
-      vertical: 0.12,
-      depth: 0.35,
-      rimIntensity: 0.9,
-      color: "#DCE7FF",
-      premiereIntensity: 1.7,
-      premiereSpeed: 1.8,
-    },
-    background: { intensity: 0.1, speed: 1.1, warp: 0.5 },
-  },
-  {
-    id: "nocturno",
-    name: "Nocturno",
-    accent: "#A78BFA",
-    wind: {
-      strength: 2.4,
-      turbulence: 4.2,
-      direction: -0.15,
-      speed: 0.75,
-      gravity: 1.4,
-      gustiness: 1.4,
-    },
-    material: {
-      preset: 2,
-      scale: 1.4,
-      thickness: 0.016,
-      normalStrength: 0.82,
-      bumpStrength: 0.75,
-      roughness: 0.85,
-      sheenIntensity: 0.8,
-    },
-    lighting: {
-      ambient: 0.045,
-      keyIntensity: 0.72,
-      fillIntensity: 0.18,
-      shadowIntensity: 0.58,
-      horizontal: 0.72,
-      vertical: 0.12,
-      depth: 0.45,
-      rimIntensity: 1.1,
-      color: "#91A9FF",
-      premiereIntensity: 1.3,
-      premiereSpeed: 0.7,
-    },
-    background: { intensity: 0.095, speed: 0.22, warp: 0.28 },
-  },
-];
-
-const moodSettingsSignature = (settings: MoodSettings) =>
-  [
-    settings.wind.strength,
-    settings.wind.turbulence,
-    settings.wind.direction,
-    settings.wind.speed,
-    settings.wind.gravity,
-    settings.wind.gustiness,
-    settings.material.preset,
-    settings.material.scale,
-    settings.material.thickness,
-    settings.material.normalStrength,
-    settings.material.bumpStrength,
-    settings.material.roughness,
-    settings.material.sheenIntensity,
-    settings.lighting.ambient,
-    settings.lighting.keyIntensity,
-    settings.lighting.fillIntensity,
-    settings.lighting.shadowIntensity,
-    settings.lighting.horizontal,
-    settings.lighting.vertical,
-    settings.lighting.depth,
-    settings.lighting.rimIntensity,
-    settings.lighting.color.toUpperCase(),
-    settings.lighting.premiereIntensity,
-    settings.lighting.premiereSpeed,
-    settings.background.intensity,
-    settings.background.speed,
-    settings.background.warp,
-  ].join("|");
-
-const isStoredMood = (value: unknown): value is MoodPreset => {
-  if (!value || typeof value !== "object") return false;
-  const mood = value as Partial<MoodPreset>;
-  if (
-    typeof mood.id !== "string" ||
-    typeof mood.name !== "string" ||
-    typeof mood.accent !== "string" ||
-    !mood.wind ||
-    !mood.material ||
-    !mood.lighting ||
-    !mood.background
-  ) {
-    return false;
-  }
-
-  const numericValues = [
-    ...Object.values(mood.wind),
-    ...Object.values(mood.material),
-    ...Object.entries(mood.lighting)
-      .filter(([key]) => key !== "color")
-      .map(([, entry]) => entry),
-    ...Object.values(mood.background),
-  ];
-  return (
-    numericValues.every(
-      (entry) => typeof entry === "number" && Number.isFinite(entry),
-    ) &&
-    typeof mood.lighting.color === "string" &&
-    /^#[0-9a-f]{6}$/i.test(mood.lighting.color)
-  );
-};
-
-const loadCustomMoods = (): MoodPreset[] => {
-  try {
-    const stored = window.localStorage.getItem(CUSTOM_MOODS_STORAGE_KEY);
-    if (!stored) return [];
-    const parsed: unknown = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(isStoredMood)
-      .map((mood) => ({ ...mood, custom: true }));
-  } catch {
-    return [];
-  }
-};
-
-const getBackgroundControls = (
-  palette: ProceduralBackgroundPalette,
-): BackgroundControls => ({
-  intensity: palette.intensity,
-  speed: palette.speed,
-  warp: palette.warp,
-});
-
-const DESIGN_PRESETS: DesignPreset[] = [
-  {
-    id: "brubank",
-    label: "Brubank",
-    color: "#614AD9",
-    asset: "/flags/brubank.png",
-    identityBackground: "#100B21",
-    background: {
-      edge: "#100B21",
-      colors: ["#2B1765", "#614AD9", "#A18BFF"],
-      seed: 2.15,
-      speed: 0.42,
-      warp: 0.2,
-      intensity: 0.08,
-    },
-  },
-  {
-    id: "xapo",
-    label: "Xapo",
-    color: "#FFFFFF",
-    asset: "/flags/xapo.png",
-    identityBackground: "#17130F",
-    background: {
-      edge: "#17130F",
-      colors: ["#3B2618", "#E95820", "#E8D7BC"],
-      seed: 4.7,
-      speed: 0.3,
-      warp: 0.14,
-      intensity: 0.06,
-    },
-  },
-  {
-    id: "popcorn",
-    label: "Popcorn",
-    color: "#EF0000",
-    asset: "/flags/popcorn.png",
-    identityBackground: "#170607",
-    background: {
-      edge: "#170607",
-      colors: ["#52090B", "#EF0000", "#FFB05C"],
-      seed: 6.35,
-      speed: 0.58,
-      warp: 0.23,
-      intensity: 0.07,
-    },
-  },
-  {
-    id: "ba",
-    label: "BA",
-    color: "#FED501",
-    asset: "/flags/ba.png",
-    identityBackground: "#171404",
-    background: {
-      edge: "#171404",
-      colors: ["#453A04", "#CDAE00", "#FFF1A3"],
-      seed: 9.2,
-      speed: 0.27,
-      warp: 0.12,
-      intensity: 0.06,
-    },
-  },
-  {
-    id: "taringa",
-    label: "Taringa",
-    color: "#005DAB",
-    asset: "/flags/taringa.png",
-    identityBackground: "#05111D",
-    background: {
-      edge: "#05111D",
-      colors: ["#073B64", "#005DAB", "#2495FF"],
-      seed: 12.8,
-      speed: 0.38,
-      warp: 0.19,
-      intensity: 0.07,
-    },
-  },
-];
-
-const INITIAL_DESIGN = DESIGN_PRESETS[0];
-const FLAG_COLORS = DESIGN_PRESETS.map((design) => design.color);
-
-const FABRIC_PRESETS = [
-  { id: 0, label: "Algodón", detail: "Trama plana" },
-  { id: 1, label: "Lino", detail: "Fibra irregular" },
-  { id: 2, label: "Sarga", detail: "Tejido diagonal" },
-  { id: 3, label: "Ripstop", detail: "Malla técnica" },
-  { id: 4, label: "Liso", detail: "Sin microtrama" },
-];
-
-const TRANSITION_OPTIONS: {
-  id: TransitionMode;
-  label: string;
-  detail: string;
-}[] = [
-  {
-    id: "logo",
-    label: "Logo",
-    detail: "El símbolo se expande desde el punto de contacto",
-  },
-  {
-    id: "touch",
-    label: "Toque",
-    detail: "Onda circular desde el punto de contacto",
-  },
-  {
-    id: "weave",
-    label: "Trama",
-    detail: "Barrido compacto entre fibras",
-  },
-  {
-    id: "tear",
-    label: "Rasgado",
-    detail: "Aberturas orgánicas y bordes rotos",
-  },
-];
-
-function getTransitionModeValue(mode: TransitionMode) {
-  if (mode === "tear") return 1;
-  if (mode === "touch") return 2;
-  if (mode === "logo") return 3;
-  return 0;
-}
-
-const vertexShader = /* glsl */ `
-  uniform float uFlagSize;
-  uniform float uThickness;
-  uniform float uTransitionScale;
-
-  varying vec2 vUv;
-  varying vec3 vWorldPosition;
-  varying vec3 vWorldNormal;
-  varying float vFold;
-
-  void main() {
-    vUv = uv;
-    vec3 p =
-      (position + normal * uThickness * 0.5 * SURFACE_DIRECTION) *
-      uFlagSize *
-      uTransitionScale;
-    vec3 transformedNormal = normalMatrix * normal;
-    float transformedNormalLengthSquared =
-      dot(transformedNormal, transformedNormal);
-    vWorldNormal =
-      transformedNormalLengthSquared > 0.00000001
-        ? transformedNormal * inversesqrt(transformedNormalLengthSquared)
-        : vec3(0.0, 0.0, 1.0);
-    vFold = position.z;
-    vec4 worldPosition = modelMatrix * vec4(p, 1.0);
-    vWorldPosition = worldPosition.xyz;
-    gl_Position = projectionMatrix * viewMatrix * worldPosition;
-  }
-`;
-
-const fragmentShader = /* glsl */ `
-  uniform float uTime;
-  uniform vec3 uColor;
-  uniform vec3 uPreviousColor;
-  uniform sampler2D uArtwork;
-  uniform sampler2D uPreviousArtwork;
-  uniform float uDesignTransition;
-  uniform float uTransitionDirection;
-  uniform float uTransitionMode;
-  uniform float uTransitionSeed;
-  uniform vec2 uTransitionOrigin;
-  uniform vec2 uTransitionScreenOrigin;
-  uniform vec2 uViewport;
-  uniform float uFabricPreset;
-  uniform float uTextureScale;
-  uniform float uNormalStrength;
-  uniform float uBumpStrength;
-  uniform float uRoughness;
-  uniform float uSheenIntensity;
-  uniform float uAmbientIntensity;
-  uniform float uKeyIntensity;
-  uniform float uFillIntensity;
-  uniform float uLightX;
-  uniform float uLightY;
-  uniform float uLightZ;
-  uniform float uRimIntensity;
-  uniform vec3 uLightColor;
-  uniform float uPremiereActive;
-  uniform float uPremiereIntensity;
-  uniform float uPremiereSpeed;
-  uniform vec2 uClothSize;
-
-  varying vec2 vUv;
-  varying vec3 vWorldPosition;
-  varying vec3 vWorldNormal;
-  varying float vFold;
-
-  vec3 safeNormalize(vec3 value, vec3 fallback) {
-    float lengthSquared = dot(value, value);
-    return lengthSquared > 0.00000001
-      ? value * inversesqrt(lengthSquared)
-      : fallback;
-  }
-
-  float thread(float value, float frequency, float sharpness) {
-    float phase = value * frequency;
-    float ridge = pow(0.5 + 0.5 * cos(phase), sharpness);
-    float footprint = fwidth(phase);
-    float visibility = 1.0 - smoothstep(0.55, 2.35, footprint);
-    return mix(0.34, ridge, visibility);
-  }
-
-  float transitionHash(vec2 p) {
-    return fract(
-      sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123
-    );
-  }
-
-  float transitionNoise(vec2 p) {
-    vec2 cell = floor(p);
-    vec2 local = fract(p);
-    vec2 blend = local * local * (3.0 - 2.0 * local);
-    float a = transitionHash(cell);
-    float b = transitionHash(cell + vec2(1.0, 0.0));
-    float c = transitionHash(cell + vec2(0.0, 1.0));
-    float d = transitionHash(cell + vec2(1.0, 1.0));
-    return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
-  }
-
-  float transitionFbm(vec2 p) {
-    float value = 0.0;
-    value += transitionNoise(p) * 0.52;
-    p = p * 2.03 + vec2(13.7, 7.9);
-    value += transitionNoise(p) * 0.27;
-    p = p * 2.07 + vec2(5.4, 17.3);
-    value += transitionNoise(p) * 0.14;
-    p = p * 2.11 + vec2(19.1, 3.6);
-    value += transitionNoise(p) * 0.07;
-    return value;
-  }
-
-  float sdCapsule(
-    vec2 point,
-    vec2 start,
-    vec2 end,
-    float radius
-  ) {
-    vec2 segment = end - start;
-    float projection = clamp(
-      dot(point - start, segment) /
-      max(dot(segment, segment), 0.00001),
-      0.0,
-      1.0
-    );
-    return length(point - start - segment * projection) - radius;
-  }
-
-  float logoSdf(vec2 point) {
-    const float armRadius = 0.13;
-    const float cardinalReach = 0.365;
-    const float diagonalReach = 0.258;
-    float distanceToLogo = sdCapsule(
-      point,
-      vec2(-cardinalReach, 0.0),
-      vec2(cardinalReach, 0.0),
-      armRadius
-    );
-    distanceToLogo = min(
-      distanceToLogo,
-      sdCapsule(
-        point,
-        vec2(0.0, -cardinalReach),
-        vec2(0.0, cardinalReach),
-        armRadius
-      )
-    );
-    distanceToLogo = min(
-      distanceToLogo,
-      sdCapsule(
-        point,
-        vec2(-diagonalReach, -diagonalReach),
-        vec2(diagonalReach, diagonalReach),
-        armRadius
-      )
-    );
-    distanceToLogo = min(
-      distanceToLogo,
-      sdCapsule(
-        point,
-        vec2(-diagonalReach, diagonalReach),
-        vec2(diagonalReach, -diagonalReach),
-        armRadius
-      )
-    );
-    return distanceToLogo;
-  }
-
-  float weaveHeight(vec2 uv) {
-    vec2 physicalTextureScale =
-      uClothSize / vec2(3.35, 1.9);
-    vec2 p =
-      uv *
-      max(uTextureScale, 0.2) *
-      physicalTextureScale;
-
-    if (uFabricPreset > 3.5) {
-      return 0.5;
-    }
-
-    if (uFabricPreset < 0.5) {
-      float warp = thread(p.x, 420.0, 4.5);
-      float weft = thread(p.y, 310.0, 4.5);
-      float overUnder =
-        0.5 + 0.5 * sin(p.x * 210.0) * sin(p.y * 155.0);
-      float selectorFootprint = max(
-        fwidth(p.x * 210.0),
-        fwidth(p.y * 155.0)
-      );
-      overUnder = mix(
-        0.5,
-        overUnder,
-        1.0 - smoothstep(0.65, 2.2, selectorFootprint)
-      );
-      return mix(warp, weft, smoothstep(0.38, 0.62, overUnder));
-    }
-
-    if (uFabricPreset < 1.5) {
-      float warp = thread(p.x + sin(p.y * 31.0) * 0.0022, 320.0, 6.0);
-      float weft = thread(p.y + sin(p.x * 37.0) * 0.0028, 235.0, 5.5);
-      float irregular =
-        0.5 + 0.5 * sin(p.x * 83.0 + sin(p.y * 71.0) * 1.4);
-      return clamp(warp * 0.55 + weft * 0.38 + irregular * 0.07, 0.0, 1.0);
-    }
-
-    if (uFabricPreset < 2.5) {
-      float diagonal = thread(p.x * 0.78 + p.y, 260.0, 4.0);
-      float counter = thread(p.x - p.y * 0.24, 460.0, 6.0);
-      return diagonal * 0.76 + counter * 0.24;
-    }
-
-    float fine =
-      thread(p.x, 360.0, 5.0) * 0.24 +
-      thread(p.y, 320.0, 5.0) * 0.22;
-    float grid = max(
-      thread(p.x, 70.0, 14.0),
-      thread(p.y, 62.0, 14.0)
-    );
-    return clamp(fine + grid * 0.66, 0.0, 1.0);
-  }
-
-  float premiereBeam(vec2 uv, float originX, float phase) {
-    float sweep =
-      sin(uTime * uPremiereSpeed * 0.62 + phase) * 0.48 +
-      sin(uTime * uPremiereSpeed * 0.27 + phase * 1.7) * 0.17;
-    vec2 direction = normalize(vec2(sin(sweep), cos(sweep)));
-    vec2 relative = uv - vec2(originX, -0.16);
-    float along = dot(relative, direction);
-    float across = abs(dot(relative, vec2(direction.y, -direction.x)));
-    float width = 0.018 + max(along, 0.0) * 0.075;
-    float cone = exp(-pow(across / max(width, 0.008), 2.0) * 2.3);
-    float reach =
-      smoothstep(-0.02, 0.13, along) *
-      (1.0 - smoothstep(0.95, 1.42, along));
-    return cone * reach;
-  }
-
-  void main() {
-    vec3 dpdx = dFdx(vWorldPosition);
-    vec3 dpdy = dFdy(vWorldPosition);
-    vec2 duvdx = dFdx(vUv);
-    vec2 duvdy = dFdy(vUv);
-    vec3 macroNormal = safeNormalize(
-      vWorldNormal,
-      vec3(0.0, 0.0, 1.0)
-    );
-    if (!gl_FrontFacing) macroNormal *= -1.0;
-
-    float determinant = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
-    float inverseDeterminant =
-      abs(determinant) > 0.000001 ? 1.0 / determinant : 1.0;
-    vec3 fallbackAxis =
-      abs(macroNormal.y) < 0.999
-        ? vec3(0.0, 1.0, 0.0)
-        : vec3(1.0, 0.0, 0.0);
-    vec3 fallbackTangent = safeNormalize(
-      cross(fallbackAxis, macroNormal),
-      vec3(1.0, 0.0, 0.0)
-    );
-    vec3 tangentCandidate =
-      (dpdx * duvdy.y - dpdy * duvdx.y) * inverseDeterminant;
-    float tangentLengthSquared = dot(tangentCandidate, tangentCandidate);
-    vec3 tangent =
-      tangentLengthSquared > 0.00000001
-        ? tangentCandidate * inversesqrt(tangentLengthSquared)
-        : fallbackTangent;
-    vec3 bitangentCandidate =
-      (-dpdx * duvdy.x + dpdy * duvdx.x) * inverseDeterminant;
-    float bitangentLengthSquared =
-      dot(bitangentCandidate, bitangentCandidate);
-    vec3 bitangent =
-      bitangentLengthSquared > 0.00000001
-        ? bitangentCandidate * inversesqrt(bitangentLengthSquared)
-        : safeNormalize(
-            cross(macroNormal, tangent),
-            vec3(0.0, 1.0, 0.0)
-          );
-
-    vec2 physicalTextureScale =
-      uClothSize / vec2(3.35, 1.9);
-    float textureFootprint =
-      max(
-        fwidth(vUv.x) * physicalTextureScale.x,
-        fwidth(vUv.y) * physicalTextureScale.y
-      ) *
-      max(uTextureScale, 0.2);
-    float detailFade =
-      1.0 - smoothstep(0.0024, 0.0085, textureFootprint);
-    vec2 texel =
-      vec2(0.0016) /
-      max(uTextureScale, 0.2) /
-      max(physicalTextureScale, vec2(0.001));
-    float height = weaveHeight(vUv);
-    vec2 heightGradient = vec2(
-      weaveHeight(vUv + vec2(texel.x, 0.0)) -
-        weaveHeight(vUv - vec2(texel.x, 0.0)),
-      weaveHeight(vUv + vec2(0.0, texel.y)) -
-        weaveHeight(vUv - vec2(0.0, texel.y))
-    ) * 0.5;
-    float gradientLimit =
-      uFabricPreset < 0.5 ? 0.12 : 0.34;
-    heightGradient *= min(
-      1.0,
-      gradientLimit / max(length(heightGradient), 0.0001)
-    );
-    vec3 normal = safeNormalize(
-      macroNormal -
-        tangent * heightGradient.x * uNormalStrength * detailFade * 0.58 -
-        bitangent * heightGradient.y * uNormalStrength * detailFade * 0.58,
-      macroNormal
-    );
-
-    vec3 keyLight = safeNormalize(
-      vec3(uLightX, uLightY, uLightZ),
-      vec3(0.0, 0.0, 1.0)
-    );
-    vec3 fillLight = safeNormalize(
-      vec3(-uLightX, max(0.18, -uLightY * 0.35), uLightZ),
-      vec3(0.0, 0.0, 1.0)
-    );
-    vec3 rimLight = safeNormalize(
-      vec3(0.7, -0.2, -0.55),
-      vec3(0.0, 0.0, -1.0)
-    );
-    float diffuse = max(dot(normal, keyLight), 0.0);
-    float fillDiffuse = max(dot(normal, fillLight), 0.0);
-    float rim = pow(
-      clamp(1.0 - abs(normal.z), 0.0, 1.0),
-      2.4
-    );
-    float back = max(dot(normal, rimLight), 0.0);
-    vec3 viewDirection = safeNormalize(
-      cameraPosition - vWorldPosition,
-      vec3(0.0, 0.0, 1.0)
-    );
-    vec3 halfDirection = safeNormalize(
-      keyLight + viewDirection,
-      normal
-    );
-    float specularPower = mix(72.0, 11.0, uRoughness);
-    float fiberAlignment = pow(
-      clamp(abs(dot(tangent, halfDirection)), 0.0, 1.0),
-      1.5
-    );
-    float anisotropicResponse = mix(0.74, 1.28, fiberAlignment);
-    float specular =
-      pow(
-        clamp(dot(normal, halfDirection), 0.0, 1.0),
-        specularPower
-      ) *
-      mix(0.24, 0.032, uRoughness) *
-      anisotropicResponse;
-    float grazingSheen =
-      pow(
-        clamp(1.0 - dot(normal, viewDirection), 0.0, 1.0),
-        3.2
-      ) *
-      mix(0.075, 0.032, uRoughness) *
-      mix(0.82, 1.12, fiberAlignment);
-    float fiberHighlight =
-      (specular + grazingSheen) * uSheenIntensity;
-
-    float reveal = 1.0;
-    float tearEdge = 0.0;
-    float radialEdge = 0.0;
-
-    if (uDesignTransition < 0.999) {
-      float progress = clamp(uDesignTransition, 0.0, 1.0);
-      float transitionCoordinate =
-        uTransitionDirection > 0.0 ? vUv.x : 1.0 - vUv.x;
-
-      if (uTransitionMode < 0.5) {
-        float transitionFront = mix(-0.18, 1.18, progress);
-        float transitionGrain =
-          (height - 0.5) * 0.07 +
-          sin(vUv.y * 93.0 + vUv.x * 31.0) * 0.008 +
-          sin(vUv.y * 211.0 - vUv.x * 47.0) * 0.004;
-        reveal = 1.0 - smoothstep(
-          transitionFront - 0.032,
-          transitionFront + 0.032,
-          transitionCoordinate + transitionGrain
-        );
-      } else if (uTransitionMode < 1.5) {
-        float clothAspect =
-          uClothSize.x / max(uClothSize.y, 0.001);
-        vec2 tearUv = vec2(
-          vUv.x * clothAspect * 4.084,
-          vUv.y * 2.35
-        );
-        tearUv.x += sin(vUv.y * 15.0 + uTransitionSeed) * 0.34;
-        tearUv += vec2(uTransitionSeed * 1.37, uTransitionSeed * 0.73);
-        float tearField =
-          transitionFbm(tearUv) * 0.78 +
-          transitionNoise(tearUv * vec2(2.6, 2.1) + 8.4) * 0.22;
-        float localTearProgress = clamp(
-          progress * 1.32 - transitionCoordinate * 0.32,
-          0.0,
-          1.0
-        );
-        float tearThreshold = mix(1.08, -0.08, localTearProgress);
-        reveal = smoothstep(
-          tearThreshold - 0.028,
-          tearThreshold + 0.028,
-          tearField
-        );
-        tearEdge =
-          1.0 -
-          smoothstep(0.0, 0.055, abs(tearField - tearThreshold));
-      } else if (uTransitionMode < 2.5) {
-        vec2 radialVector = vec2(
-          (vUv.x - uTransitionOrigin.x) *
-            uClothSize.x /
-            max(uClothSize.y, 0.001),
-          vUv.y - uTransitionOrigin.y
-        );
-        float radialDistance = length(radialVector);
-        vec2 farthestCorner = max(
-          uTransitionOrigin,
-          vec2(1.0) - uTransitionOrigin
-        );
-        float radialMaxDistance = length(
-          vec2(
-            farthestCorner.x *
-              uClothSize.x /
-              max(uClothSize.y, 0.001),
-            farthestCorner.y
-          )
-        );
-        float radialRadius = mix(
-          -0.08,
-          radialMaxDistance + 0.08,
-          progress
-        );
-        float radialGrain =
-          (height - 0.5) * 0.035 +
-          sin(vUv.x * 157.0 + vUv.y * 83.0) * 0.006;
-        reveal = 1.0 - smoothstep(
-          radialRadius - 0.034,
-          radialRadius + 0.034,
-          radialDistance + radialGrain
-        );
-        radialEdge =
-          1.0 -
-          smoothstep(
-            0.0,
-            0.045,
-            abs(radialDistance + radialGrain - radialRadius)
-          );
-      } else {
-        vec2 safeViewport = max(uViewport, vec2(1.0));
-        vec2 screenPosition = gl_FragCoord.xy / safeViewport;
-        float screenAspect = safeViewport.x / safeViewport.y;
-        vec2 screenVector =
-          (screenPosition - uTransitionScreenOrigin) *
-          vec2(screenAspect, 1.0);
-        vec2 farthestScreenCorner = max(
-          uTransitionScreenOrigin,
-          vec2(1.0) - uTransitionScreenOrigin
-        ) * vec2(screenAspect, 1.0);
-        float screenMaxDistance = length(farthestScreenCorner);
-        float logoGrowth = progress * progress;
-        float logoScale = mix(
-          0.16,
-          screenMaxDistance * 5.8,
-          logoGrowth
-        );
-        float logoDistance = logoSdf(
-          screenVector / max(logoScale, 0.001)
-        );
-        float logoAntialias =
-          max(fwidth(logoDistance) * 1.35, 0.0008);
-        reveal = 1.0 - smoothstep(
-          -logoAntialias,
-          logoAntialias,
-          logoDistance
-        );
-        reveal = max(reveal, smoothstep(0.97, 1.0, progress));
-      }
-    }
-    vec4 previousArtwork = texture2D(uPreviousArtwork, vUv);
-    vec4 nextArtwork = texture2D(uArtwork, vUv);
-    vec3 previousFabric = mix(
-      uPreviousColor,
-      previousArtwork.rgb,
-      previousArtwork.a
-    );
-    vec3 nextFabric = mix(uColor, nextArtwork.rgb, nextArtwork.a);
-    vec3 fabric =
-      mix(previousFabric, nextFabric, reveal) * SURFACE_SHADE;
-    fabric *= 1.0 - tearEdge * 0.2 - radialEdge * 0.08;
-    float shadingHeight =
-      uFabricPreset < 0.5 ? 0.5 : height;
-    float bump =
-      (shadingHeight - 0.5) * uBumpStrength * detailFade;
-    fabric *= 1.0 + bump * 0.08;
-
-    float directLighting =
-      diffuse * 0.76 * uKeyIntensity +
-      fillDiffuse * uFillIntensity +
-      back * 0.16 +
-      rim * uRimIntensity;
-    directLighting += bump * 0.035;
-    directLighting += clamp(vFold, -0.6, 0.6) * 0.09;
-    vec3 lighting =
-      vec3(max(uAmbientIntensity, 0.0)) +
-      uLightColor * max(directLighting, 0.0);
-    float premiereLighting = 0.0;
-    if (uPremiereActive > 0.5) {
-      premiereLighting =
-        (
-          premiereBeam(vUv, 0.12, 0.2) +
-          premiereBeam(vUv, 0.48, 2.4) +
-          premiereBeam(vUv, 0.86, 4.5)
-        ) *
-        uPremiereIntensity;
-    }
-    vec3 premiereColor = vec3(0.52, 0.68, 1.0);
-    lighting += premiereColor * premiereLighting * 0.92;
-    vec3 fiberHighlightColor = mix(uLightColor, fabric, 0.32);
-
-    gl_FragColor = vec4(
-      fabric * lighting +
-      fiberHighlight * fiberHighlightColor * uKeyIntensity +
-      premiereColor * premiereLighting * 0.055,
-      1.0
-    );
-    #include <colorspace_fragment>
-  }
-`;
-
-const edgeVertexShader = /* glsl */ `
-  uniform float uFlagSize;
-  uniform float uThickness;
-  uniform float uTransitionScale;
-
-  attribute vec3 aClothNormal;
-  attribute float aSide;
-
-  varying vec3 vWorldPosition;
-
-  void main() {
-    vec3 p =
-      (position + aClothNormal * uThickness * 0.5 * aSide) *
-      uFlagSize *
-      uTransitionScale;
-    vec4 worldPosition = modelMatrix * vec4(p, 1.0);
-    vWorldPosition = worldPosition.xyz;
-    gl_Position = projectionMatrix * viewMatrix * worldPosition;
-  }
-`;
-
-const edgeFragmentShader = /* glsl */ `
-  uniform vec3 uColor;
-  uniform float uAmbientIntensity;
-  uniform float uKeyIntensity;
-  uniform float uFillIntensity;
-  uniform float uLightX;
-  uniform float uLightY;
-  uniform float uLightZ;
-  uniform vec3 uLightColor;
-
-  varying vec3 vWorldPosition;
-
-  void main() {
-    vec3 normal = normalize(
-      cross(dFdx(vWorldPosition), dFdy(vWorldPosition))
-    );
-    if (!gl_FrontFacing) normal *= -1.0;
-
-    vec3 keyLight = normalize(vec3(uLightX, uLightY, uLightZ));
-    vec3 fillLight = normalize(
-      vec3(-uLightX, max(0.18, -uLightY * 0.35), uLightZ)
-    );
-    float diffuse = max(dot(normal, keyLight), 0.0);
-    float fillDiffuse = max(dot(normal, fillLight), 0.0);
-    vec3 edgeLighting =
-      vec3(max(uAmbientIntensity * 0.8, 0.0)) +
-      uLightColor * (
-        diffuse * 0.34 * uKeyIntensity +
-        fillDiffuse * uFillIntensity * 0.24
-      );
-    vec3 edgeColor = uColor * max(edgeLighting, vec3(0.18));
-    gl_FragColor = vec4(edgeColor, 1.0);
-    #include <colorspace_fragment>
-  }
-`;
-
-const clothShadowVertexShader = /* glsl */ `
-  uniform float uFlagSize;
-  uniform float uTransitionScale;
-  uniform float uLightX;
-  uniform float uLightY;
-  uniform float uShadowSpread;
-  uniform float uShadowOffset;
-  uniform float uShadowDepth;
-
-  void main() {
-    vec3 p = position * uFlagSize * uTransitionScale;
-    p.xy *= uShadowSpread;
-    vec2 castDirection = normalize(
-      vec2(-uLightX, -uLightY) + vec2(0.0001)
-    );
-    p.xy += castDirection * uShadowOffset;
-    p.z -= uShadowDepth;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-  }
-`;
-
-const clothShadowFragmentShader = /* glsl */ `
-  void main() {
-    gl_FragColor = vec4(1.0);
-  }
-`;
-
-const clothShadowCompositeFragmentShader = /* glsl */ `
-  precision highp float;
-
-  varying vec2 vUv;
-  uniform sampler2D uShadowTexture;
-  uniform vec3 uShadowColor;
-  uniform float uShadowIntensity;
-
-  void main() {
-    float mask = texture2D(uShadowTexture, vUv).a;
-    float opacity = mask * uShadowIntensity * 0.5;
-    gl_FragColor = vec4(uShadowColor, opacity);
-  }
-`;
-
-const focusBlurFragmentShader = /* glsl */ `
-  precision highp float;
-
-  varying vec2 vUv;
-  uniform sampler2D uTexture;
-  uniform vec2 uTexelStep;
-
-  void main() {
-    vec4 color = texture2D(uTexture, vUv) * 0.227027;
-    color += texture2D(uTexture, vUv + uTexelStep * 1.384615) * 0.316216;
-    color += texture2D(uTexture, vUv - uTexelStep * 1.384615) * 0.316216;
-    color += texture2D(uTexture, vUv + uTexelStep * 3.230769) * 0.070270;
-    color += texture2D(uTexture, vUv - uTexelStep * 3.230769) * 0.070270;
-    gl_FragColor = color;
-  }
-`;
-
-const focusCompositeFragmentShader = /* glsl */ `
-  precision highp float;
-
-  varying vec2 vUv;
-  uniform sampler2D uSharpTexture;
-  uniform sampler2D uBlurredTexture;
-  uniform vec2 uFocusCenter;
-  uniform vec2 uResolution;
-  uniform float uFocusAmount;
-  uniform float uFocusRadius;
-  uniform float uFocusFeather;
-
-  void main() {
-    vec4 sharp = texture2D(uSharpTexture, vUv);
-    if (uFocusAmount < 0.001) {
-      gl_FragColor = sharp;
-      #include <colorspace_fragment>
-      return;
-    }
-
-    vec4 blurred = texture2D(uBlurredTexture, vUv);
-    float pointerDistance = length((vUv - uFocusCenter) * uResolution);
-    float focusMask = 1.0 - smoothstep(
-      uFocusRadius,
-      uFocusRadius + uFocusFeather,
-      pointerDistance
-    );
-    float sharpMix = mix(1.0, focusMask, uFocusAmount);
-    gl_FragColor = mix(blurred, sharp, sharpMix);
-    #include <colorspace_fragment>
-  }
-`;
-
-function createEmptyArtwork(layout: ClothLayout) {
-  const artwork = document.createElement("canvas");
-  artwork.width = layout.textureWidth;
-  artwork.height = layout.textureHeight;
-  return artwork;
-}
-
-type ArtworkBounds = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-const artworkBoundsCache = new WeakMap<HTMLImageElement, ArtworkBounds>();
-const designImageCache = new Map<string, HTMLImageElement>();
-
-function getArtworkBounds(image: HTMLImageElement): ArtworkBounds {
-  const cachedBounds = artworkBoundsCache.get(image);
-  if (cachedBounds) return cachedBounds;
-
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = image.naturalWidth;
-  sourceCanvas.height = image.naturalHeight;
-  const sourceContext = sourceCanvas.getContext("2d", {
-    willReadFrequently: true,
-  });
-  if (!sourceContext) {
-    return {
-      x: 0,
-      y: 0,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    };
-  }
-
-  sourceContext.drawImage(image, 0, 0);
-  const pixels = sourceContext.getImageData(
-    0,
-    0,
-    sourceCanvas.width,
-    sourceCanvas.height,
-  ).data;
-  let minX = sourceCanvas.width;
-  let minY = sourceCanvas.height;
-  let maxX = -1;
-  let maxY = -1;
-
-  for (let y = 0; y < sourceCanvas.height; y += 1) {
-    for (let x = 0; x < sourceCanvas.width; x += 1) {
-      const alpha = pixels[(y * sourceCanvas.width + x) * 4 + 3];
-      if (alpha < 8) continue;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-  }
-
-  const bounds =
-    maxX < minX || maxY < minY
-      ? {
-          x: 0,
-          y: 0,
-          width: image.naturalWidth,
-          height: image.naturalHeight,
-        }
-      : {
-          x: minX,
-          y: minY,
-          width: maxX - minX + 1,
-          height: maxY - minY + 1,
-        };
-  artworkBoundsCache.set(image, bounds);
-  return bounds;
-}
-
-function drawArtworkImage(
-  artworkCanvas: HTMLCanvasElement,
-  image: HTMLImageElement,
-  artworkScale: number,
-  scaleMultiplier = 1,
-  verticalOffset = 0,
-) {
-  const targetContext = artworkCanvas.getContext("2d");
-  if (!targetContext) return;
-  const bounds = getArtworkBounds(image);
-  targetContext.clearRect(0, 0, artworkCanvas.width, artworkCanvas.height);
-  const sourceWidth = bounds.width;
-  const sourceHeight = bounds.height;
-  const horizontalPadding = 96;
-  const verticalPadding = 72;
-  const fitScale = Math.min(
-    (artworkCanvas.width - horizontalPadding * 2) / sourceWidth,
-    (artworkCanvas.height - verticalPadding * 2) / sourceHeight,
-  );
-  const scale = fitScale * artworkScale * scaleMultiplier;
-  const targetWidth = sourceWidth * scale;
-  const targetHeight = sourceHeight * scale;
-
-  targetContext.drawImage(
-    image,
-    bounds.x,
-    bounds.y,
-    sourceWidth,
-    sourceHeight,
-    (artworkCanvas.width - targetWidth) / 2,
-    (artworkCanvas.height - targetHeight) / 2 +
-      artworkCanvas.height * verticalOffset,
-    targetWidth,
-    targetHeight,
-  );
-}
-
-function distanceToSegment(
-  x: number,
-  y: number,
-  startX: number,
-  startY: number,
-  endX: number,
-  endY: number,
-) {
-  const segmentX = endX - startX;
-  const segmentY = endY - startY;
-  const segmentLengthSquared =
-    segmentX * segmentX + segmentY * segmentY;
-  const projection = THREE.MathUtils.clamp(
-    ((x - startX) * segmentX + (y - startY) * segmentY) /
-      segmentLengthSquared,
-    0,
-    1,
-  );
-  return Math.hypot(
-    x - (startX + segmentX * projection),
-    y - (startY + segmentY * projection),
-  );
-}
-
-function tearNoise(
-  u: number,
-  v: number,
-  columns: number,
-  rows: number,
-) {
-  const gridX = Math.floor(u * columns);
-  const gridY = Math.floor(v * rows);
-  return (
-    Math.sin(gridX * 12.9898 + gridY * 78.233) * 43758.5453 -
-    Math.floor(
-      Math.sin(gridX * 12.9898 + gridY * 78.233) * 43758.5453,
-    )
-  );
-}
-
-function isLandscapeTornArea(
-  u: number,
-  v: number,
-  expansion: number,
-  columns: number,
-  rows: number,
-) {
-  const noise = tearNoise(u, v, columns, rows) - 0.5;
-  const largeHole =
-    ((u - 0.72) / (0.075 + expansion + noise * 0.012)) ** 2 +
-      ((v - 0.67) / (0.105 + expansion + noise * 0.015)) ** 2 <
-    1;
-  const smallHole =
-    ((u - 0.36) / (0.045 + expansion + noise * 0.01)) ** 2 +
-      ((v - 0.3) / (0.066 + expansion + noise * 0.012)) ** 2 <
-    1;
-  const mainSlit =
-    distanceToSegment(u, v, 0.43, 0.73, 0.58, 0.38) <
-    0.014 + expansion + Math.abs(noise) * 0.008;
-  const splitSlit =
-    distanceToSegment(u, v, 0.52, 0.52, 0.64, 0.43) <
-    0.009 + expansion + Math.abs(noise) * 0.006;
-  const edgeDistance = Math.abs(v - 0.2);
-  const edgeTear =
-    edgeDistance < 0.14 + expansion &&
-    u >
-      0.885 +
-        edgeDistance * 0.5 -
-        expansion * 1.5 +
-        noise * 0.018;
-
-  return largeHole || smallHole || mainSlit || splitSlit || edgeTear;
-}
-
-function isTornArea(
-  u: number,
-  v: number,
-  expansion: number,
-  columns: number,
-  rows: number,
-  anchor: ClothAnchor,
-) {
-  if (anchor === "top") {
-    return isLandscapeTornArea(
-      1 - v,
-      u,
-      expansion,
-      rows,
-      columns,
-    );
-  }
-
-  return isLandscapeTornArea(
-    u,
-    v,
-    expansion,
-    columns,
-    rows,
-  );
-}
-
-function createClothIndex(
-  geometry: THREE.PlaneGeometry,
-  columns: number,
-  rows: number,
-  anchor: ClothAnchor,
-  pointedPennantHeight: number,
-  torn: boolean,
-) {
-  const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
-  const keptIndices: number[] = [];
-  const rowLength = columns + 1;
-  const usesPointedPennant = pointedPennantHeight > 0;
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const topLeft = row * rowLength + column;
-      const topRight = topLeft + 1;
-      const bottomLeft = (row + 1) * rowLength + column;
-      const bottomRight = bottomLeft + 1;
-      const triangles =
-        usesPointedPennant && column < columns / 2
-          ? [
-              [topLeft, bottomRight, topRight],
-              [topLeft, bottomLeft, bottomRight],
-            ]
-          : [
-              [topLeft, bottomLeft, topRight],
-              [bottomLeft, bottomRight, topRight],
-            ];
-
-      for (const [a, b, c] of triangles) {
-        const centerU =
-          (uv.getX(a) + uv.getX(b) + uv.getX(c)) / 3;
-        const centerV =
-          (uv.getY(a) + uv.getY(b) + uv.getY(c)) / 3;
-        const distanceFromCenter = Math.abs(centerU - 0.5) * 2;
-        const outsidePennant =
-          centerV < pointedPennantHeight * distanceFromCenter;
-        const insideTear =
-          torn &&
-          isTornArea(
-            centerU,
-            centerV,
-            0,
-            columns,
-            rows,
-            anchor,
-          );
-
-        if (!outsidePennant && !insideTear) {
-          keptIndices.push(a, b, c);
-        }
-      }
-    }
-  }
-
-  return new THREE.BufferAttribute(new Uint16Array(keptIndices), 1);
-}
-
-function createClothEdgeGeometry(
-  sourceGeometry: THREE.PlaneGeometry,
-  topology: THREE.BufferAttribute,
-) {
-  const edgeUsage = new Map<
-    string,
-    { start: number; end: number; count: number }
-  >();
-
-  for (let triangle = 0; triangle < topology.count; triangle += 3) {
-    const vertices = [
-      topology.getX(triangle),
-      topology.getX(triangle + 1),
-      topology.getX(triangle + 2),
-    ];
-    for (let edge = 0; edge < 3; edge += 1) {
-      const start = vertices[edge];
-      const end = vertices[(edge + 1) % 3];
-      const key =
-        start < end ? `${start}:${end}` : `${end}:${start}`;
-      const existing = edgeUsage.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        edgeUsage.set(key, { start, end, count: 1 });
-      }
-    }
-  }
-
-  const boundaryEdges = [...edgeUsage.values()].filter(
-    (edge) => edge.count === 1,
-  );
-  const sourceVertices: number[] = [];
-  const edgeGeometry = new THREE.BufferGeometry();
-  const edgePositions = new Float32Array(boundaryEdges.length * 4 * 3);
-  const edgeNormals = new Float32Array(boundaryEdges.length * 4 * 3);
-  const edgeSides = new Float32Array(boundaryEdges.length * 4);
-  const indices: number[] = [];
-
-  for (let edge = 0; edge < boundaryEdges.length; edge += 1) {
-    const boundary = boundaryEdges[edge];
-    const front = edge * 4;
-    const back = front + 1;
-    const nextFront = front + 2;
-    const nextBack = nextFront + 1;
-    indices.push(front, back, nextFront, back, nextBack, nextFront);
-    sourceVertices.push(
-      boundary.start,
-      boundary.start,
-      boundary.end,
-      boundary.end,
-    );
-    edgeSides[front] = 1;
-    edgeSides[back] = -1;
-    edgeSides[nextFront] = 1;
-    edgeSides[nextBack] = -1;
-  }
-
-  const positionAttribute = new THREE.BufferAttribute(edgePositions, 3);
-  const normalAttribute = new THREE.BufferAttribute(edgeNormals, 3);
-  positionAttribute.setUsage(THREE.DynamicDrawUsage);
-  normalAttribute.setUsage(THREE.DynamicDrawUsage);
-  edgeGeometry.setAttribute("position", positionAttribute);
-  edgeGeometry.setAttribute("aClothNormal", normalAttribute);
-  edgeGeometry.setAttribute("aSide", new THREE.BufferAttribute(edgeSides, 1));
-  edgeGeometry.setIndex(indices);
-
-  const update = () => {
-    const sourcePositions = sourceGeometry.getAttribute(
-      "position",
-    ) as THREE.BufferAttribute;
-    const sourceNormals = sourceGeometry.getAttribute(
-      "normal",
-    ) as THREE.BufferAttribute;
-
-    for (let vertex = 0; vertex < sourceVertices.length; vertex += 1) {
-      const sourceVertex = sourceVertices[vertex];
-      const sourceOffset = sourceVertex * 3;
-      const targetOffset = vertex * 3;
-      edgePositions[targetOffset] = sourcePositions.array[sourceOffset] as number;
-      edgePositions[targetOffset + 1] = sourcePositions.array[
-        sourceOffset + 1
-      ] as number;
-      edgePositions[targetOffset + 2] = sourcePositions.array[
-        sourceOffset + 2
-      ] as number;
-      edgeNormals[targetOffset] = sourceNormals.array[sourceOffset] as number;
-      edgeNormals[targetOffset + 1] = sourceNormals.array[
-        sourceOffset + 1
-      ] as number;
-      edgeNormals[targetOffset + 2] = sourceNormals.array[
-        sourceOffset + 2
-      ] as number;
-    }
-
-    positionAttribute.needsUpdate = true;
-    normalAttribute.needsUpdate = true;
-  };
-
-  update();
-  return { geometry: edgeGeometry, update };
-}
-
-type ClothConstraint = {
-  a: number;
-  b: number;
-  restLength: number;
-  stiffness: number;
-  maxStretch: number;
-  disabledWhenTorn: boolean;
-};
-
-function createClothSimulation(
-  geometry: THREE.PlaneGeometry,
-  columns: number,
-  rows: number,
-  layout: ClothLayout,
-) {
-  const positionAttribute = geometry.getAttribute("position") as THREE.BufferAttribute;
-  const positions = positionAttribute.array as Float32Array;
-  const restPositions = new Float32Array(positions);
-  const previousPositions = new Float32Array(positions);
-  const uvAttribute = geometry.getAttribute("uv") as THREE.BufferAttribute;
-  const vertexCount = positions.length / 3;
-  const pinned = new Uint8Array(vertexCount);
-  const grabInfluence = new Float32Array(vertexCount);
-  const constraints: ClothConstraint[] = [];
-  const rowLength = columns + 1;
-  const selfCollisionDistance = 0.06;
-  const selfCollisionStiffness = 0.88;
-  const autoReleaseFrames = 20;
-  const spatialHash = new Map<number, number[]>();
-  const spatialBuckets: number[][] = [];
-  const resolutionSpan = Math.max(columns, rows);
-  const baseConstraintIterations =
-    resolutionSpan <= 48
-      ? 5
-      : resolutionSpan <= 72
-        ? 6
-        : resolutionSpan <= 96
-          ? 7
-          : 8;
-  let tornEnabled = false;
-  let simulationFrame = 0;
-  let lastFreeEdgeVelocity = 0;
-  let lastMotionEnergy = 0;
-  let unsafeGrabFrames = 0;
-  let autoReleaseFramesRemaining = 0;
-  let grabSettings = { ...INITIAL_GRAB };
-  let grabState: {
-    targetX: number;
-    targetY: number;
-    targetZ: number;
-    particles: {
-      index: number;
-      offsetX: number;
-      offsetY: number;
-      offsetZ: number;
-      weight: number;
-    }[];
-  } | null = null;
-
-  const index = (column: number, row: number) => row * rowLength + column;
-  const hangsFromTop = layout.anchor === "top";
-  const anchorVertexCount = hangsFromTop ? columns + 1 : rows + 1;
-  const hardPinVertexCount = Math.max(
-    2,
-    Math.round(anchorVertexCount * 0.07),
-  );
-  const softPinVertexCount = Math.max(
-    2,
-    Math.round(anchorVertexCount * 0.06),
-  );
-  const pinnedVertices: number[] = [];
-  const softPinnedVertices: { particle: number; strength: number }[] = [];
-
-  for (let anchorIndex = 0; anchorIndex < anchorVertexCount; anchorIndex += 1) {
-    const distanceFromNearestPin = Math.min(
-      anchorIndex,
-      anchorVertexCount - 1 - anchorIndex,
-    );
-    const particle = hangsFromTop
-      ? index(anchorIndex, 0)
-      : index(0, anchorIndex);
-
-    if (distanceFromNearestPin < hardPinVertexCount) {
-      pinnedVertices.push(particle);
-      continue;
-    }
-
-    const softPinIndex = distanceFromNearestPin - hardPinVertexCount;
-    if (softPinIndex < softPinVertexCount) {
-      const progress =
-        (softPinIndex + 1) / (softPinVertexCount + 1);
-      softPinnedVertices.push({
-        particle,
-        strength: Math.pow(1 - progress, 1.35),
-      });
-    }
-  }
-
-  for (const particle of pinnedVertices) {
-    pinned[particle] = 1;
-  }
-
-  const applySoftPinConstraints = () => {
-    for (const { particle, strength } of softPinnedVertices) {
-      const particle3 = particle * 3;
-      const stiffness = strength * 0.18;
-      const correctionX =
-        (restPositions[particle3] - positions[particle3]) * stiffness;
-      const correctionY =
-        (restPositions[particle3 + 1] - positions[particle3 + 1]) *
-        stiffness;
-      const correctionZ =
-        (restPositions[particle3 + 2] - positions[particle3 + 2]) *
-        stiffness;
-
-      positions[particle3] += correctionX;
-      positions[particle3 + 1] += correctionY;
-      positions[particle3 + 2] += correctionZ;
-      previousPositions[particle3] += correctionX * 0.9;
-      previousPositions[particle3 + 1] += correctionY * 0.9;
-      previousPositions[particle3 + 2] += correctionZ * 0.9;
-    }
-  };
-
-  const addConstraint = (
-    a: number,
-    b: number,
-    stiffness: number,
-    maxStretch: number,
-  ) => {
-    const a3 = a * 3;
-    const b3 = b * 3;
-    const dx = restPositions[b3] - restPositions[a3];
-    const dy = restPositions[b3 + 1] - restPositions[a3 + 1];
-    const dz = restPositions[b3 + 2] - restPositions[a3 + 2];
-    constraints.push({
-      a,
-      b,
-      restLength: Math.hypot(dx, dy, dz),
-      stiffness,
-      maxStretch,
-      disabledWhenTorn: isTornArea(
-        (uvAttribute.getX(a) + uvAttribute.getX(b)) * 0.5,
-        (uvAttribute.getY(a) + uvAttribute.getY(b)) * 0.5,
-        0.014,
-        columns,
-        rows,
-        layout.anchor,
-      ),
-    });
-  };
-
-  for (let row = 0; row <= rows; row += 1) {
-    for (let column = 0; column <= columns; column += 1) {
-      if (column < columns) {
-        addConstraint(index(column, row), index(column + 1, row), 0.995, 1.006);
-      }
-      if (row < rows) {
-        addConstraint(index(column, row), index(column, row + 1), 0.995, 1.006);
-      }
-      if (column < columns && row < rows) {
-        addConstraint(index(column, row), index(column + 1, row + 1), 0.9, 1.012);
-        addConstraint(index(column + 1, row), index(column, row + 1), 0.9, 1.012);
-      }
-      if (column < columns - 1) {
-        addConstraint(index(column, row), index(column + 2, row), 0.7, 1.025);
-      }
-      if (row < rows - 1) {
-        addConstraint(index(column, row), index(column, row + 2), 0.7, 1.025);
-      }
-    }
-  }
-
-  const reset = () => {
-    grabState = null;
-    grabInfluence.fill(0);
-    positions.set(restPositions);
-    previousPositions.set(restPositions);
-    lastFreeEdgeVelocity = 0;
-    lastMotionEnergy = 0;
-    unsafeGrabFrames = 0;
-    autoReleaseFramesRemaining = 0;
-
-    for (let row = 0; row <= rows; row += 1) {
-      for (let column = 0; column <= columns; column += 1) {
-        const particle = index(column, row);
-        if (pinned[particle] === 1) continue;
-        const vertex = index(column, row) * 3;
-        const distanceFromAnchor = hangsFromTop
-          ? row / rows
-          : column / columns;
-        const seed = Math.sin(column * 1.73 + row * 2.31);
-        positions[vertex + 2] =
-          seed * 0.0025 * distanceFromAnchor;
-        previousPositions[vertex + 2] = positions[vertex + 2];
-      }
-    }
-
-    geometry.computeVertexNormals();
-    positionAttribute.needsUpdate = true;
-    geometry.getAttribute("normal").needsUpdate = true;
-  };
-
-  const solveConstraints = () => {
-    for (const constraint of constraints) {
-      const a3 = constraint.a * 3;
-      const b3 = constraint.b * 3;
-      const dx = positions[b3] - positions[a3];
-      const dy = positions[b3 + 1] - positions[a3 + 1];
-      const dz = positions[b3 + 2] - positions[a3 + 2];
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (distance < 0.000001) continue;
-
-      const localStiffness =
-        tornEnabled && constraint.disabledWhenTorn
-          ? constraint.stiffness * 0.55
-          : constraint.stiffness;
-      const elasticDifference =
-        ((distance - constraint.restLength) / distance) *
-        localStiffness;
-      const maximumLength = constraint.restLength * constraint.maxStretch;
-      const strainLimitDifference =
-        distance > maximumLength
-          ? (distance - maximumLength) / distance
-          : Number.NEGATIVE_INFINITY;
-      const difference = Math.max(elasticDifference, strainLimitDifference);
-      const aPinned = pinned[constraint.a] === 1;
-      const bPinned = pinned[constraint.b] === 1;
-
-      if (!aPinned && !bPinned) {
-        const correction = difference * 0.5;
-        positions[a3] += dx * correction;
-        positions[a3 + 1] += dy * correction;
-        positions[a3 + 2] += dz * correction;
-        positions[b3] -= dx * correction;
-        positions[b3 + 1] -= dy * correction;
-        positions[b3 + 2] -= dz * correction;
-      } else if (aPinned && !bPinned) {
-        positions[b3] -= dx * difference;
-        positions[b3 + 1] -= dy * difference;
-        positions[b3 + 2] -= dz * difference;
-      } else if (!aPinned && bPinned) {
-        positions[a3] += dx * difference;
-        positions[a3 + 1] += dy * difference;
-        positions[a3 + 2] += dz * difference;
-      }
-    }
-  };
-
-  const spatialKey = (x: number, y: number, z: number) =>
-    ((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) >>> 0;
-
-  const solveSelfCollisions = () => {
-    spatialHash.clear();
-    let usedBuckets = 0;
-    let collisionCount = 0;
-    let grabbedCollisionCount = 0;
-    let predictedGrabCollisionCount = 0;
-    let maximumPenetration = 0;
-    const minimumDistanceSquared =
-      selfCollisionDistance * selfCollisionDistance;
-    const warningDistance = selfCollisionDistance * 1.35;
-    const warningDistanceSquared = warningDistance * warningDistance;
-
-    for (let particle = 0; particle < vertexCount; particle += 1) {
-      const particle3 = particle * 3;
-      const cellX = Math.floor(positions[particle3] / selfCollisionDistance);
-      const cellY = Math.floor(
-        positions[particle3 + 1] / selfCollisionDistance,
-      );
-      const cellZ = Math.floor(
-        positions[particle3 + 2] / selfCollisionDistance,
-      );
-      const particleColumn = particle % rowLength;
-      const particleRow = Math.floor(particle / rowLength);
-
-      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-          for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
-            const nearbyParticles = spatialHash.get(
-              spatialKey(
-                cellX + offsetX,
-                cellY + offsetY,
-                cellZ + offsetZ,
-              ),
-            );
-            if (!nearbyParticles) continue;
-
-            for (const nearby of nearbyParticles) {
-              const nearbyColumn = nearby % rowLength;
-              const nearbyRow = Math.floor(nearby / rowLength);
-              if (
-                Math.abs(particleColumn - nearbyColumn) <= 2 &&
-                Math.abs(particleRow - nearbyRow) <= 2
-              ) {
-                continue;
-              }
-              const nearby3 = nearby * 3;
-              let dx = positions[particle3] - positions[nearby3];
-              let dy = positions[particle3 + 1] - positions[nearby3 + 1];
-              let dz = positions[particle3 + 2] - positions[nearby3 + 2];
-              const distanceSquared = dx * dx + dy * dy + dz * dz;
-              if (distanceSquared >= warningDistanceSquared) continue;
-
-              const involvesGrabbedParticle =
-                grabInfluence[particle] > 0.08 ||
-                grabInfluence[nearby] > 0.08;
-              if (distanceSquared >= minimumDistanceSquared) {
-                if (!involvesGrabbedParticle) continue;
-                const warningDistanceToPair = Math.sqrt(distanceSquared);
-                if (warningDistanceToPair < 0.000001) continue;
-                const inverseWarningDistance =
-                  1 / warningDistanceToPair;
-                const particleVelocityX =
-                  positions[particle3] - previousPositions[particle3];
-                const particleVelocityY =
-                  positions[particle3 + 1] -
-                  previousPositions[particle3 + 1];
-                const particleVelocityZ =
-                  positions[particle3 + 2] -
-                  previousPositions[particle3 + 2];
-                const nearbyVelocityX =
-                  positions[nearby3] - previousPositions[nearby3];
-                const nearbyVelocityY =
-                  positions[nearby3 + 1] -
-                  previousPositions[nearby3 + 1];
-                const nearbyVelocityZ =
-                  positions[nearby3 + 2] -
-                  previousPositions[nearby3 + 2];
-                const approach =
-                  dx *
-                    inverseWarningDistance *
-                    (particleVelocityX - nearbyVelocityX) +
-                  dy *
-                    inverseWarningDistance *
-                    (particleVelocityY - nearbyVelocityY) +
-                  dz *
-                    inverseWarningDistance *
-                    (particleVelocityZ - nearbyVelocityZ);
-                if (
-                  approach < -0.0015 &&
-                  warningDistanceToPair + approach <
-                    selfCollisionDistance * 0.92
-                ) {
-                  predictedGrabCollisionCount += 1;
-                }
-                continue;
-              }
-
-              let distance = Math.sqrt(distanceSquared);
-              if (distance < 0.000001) {
-                const direction = (particle + nearby) % 2 === 0 ? 1 : -1;
-                dx = direction * 0.577;
-                dy = 0.577;
-                dz = -direction * 0.577;
-                distance = 0;
-              } else {
-                dx /= distance;
-                dy /= distance;
-                dz /= distance;
-              }
-
-              const particlePinned = pinned[particle] === 1;
-              const nearbyPinned = pinned[nearby] === 1;
-              if (particlePinned && nearbyPinned) continue;
-
-              const separation =
-                (selfCollisionDistance - distance) *
-                selfCollisionStiffness;
-              maximumPenetration = Math.max(
-                maximumPenetration,
-                (selfCollisionDistance - distance) /
-                  selfCollisionDistance,
-              );
-              if (involvesGrabbedParticle) {
-                grabbedCollisionCount += 1;
-              }
-              const particleMobility = particlePinned
-                ? 0
-                : 1 - grabInfluence[particle] * 0.85;
-              const nearbyMobility = nearbyPinned
-                ? 0
-                : 1 - grabInfluence[nearby] * 0.85;
-              const totalMobility =
-                particleMobility + nearbyMobility;
-              if (totalMobility < 0.000001) continue;
-              const particleShare =
-                particleMobility / totalMobility;
-              const nearbyShare =
-                nearbyMobility / totalMobility;
-              const particleCorrection = separation * particleShare;
-              const nearbyCorrection = separation * nearbyShare;
-
-              positions[particle3] += dx * particleCorrection;
-              positions[particle3 + 1] += dy * particleCorrection;
-              positions[particle3 + 2] += dz * particleCorrection;
-              positions[nearby3] -= dx * nearbyCorrection;
-              positions[nearby3 + 1] -= dy * nearbyCorrection;
-              positions[nearby3 + 2] -= dz * nearbyCorrection;
-
-              previousPositions[particle3] +=
-                dx * particleCorrection * 0.35;
-              previousPositions[particle3 + 1] +=
-                dy * particleCorrection * 0.35;
-              previousPositions[particle3 + 2] +=
-                dz * particleCorrection * 0.35;
-              previousPositions[nearby3] -=
-                dx * nearbyCorrection * 0.35;
-              previousPositions[nearby3 + 1] -=
-                dy * nearbyCorrection * 0.35;
-              previousPositions[nearby3 + 2] -=
-                dz * nearbyCorrection * 0.35;
-              collisionCount += 1;
-            }
-          }
-        }
-      }
-
-      const key = spatialKey(cellX, cellY, cellZ);
-      const currentCell = spatialHash.get(key);
-      if (currentCell) {
-        currentCell.push(particle);
-      } else {
-        const bucket = spatialBuckets[usedBuckets] ?? [];
-        bucket.length = 0;
-        bucket.push(particle);
-        spatialBuckets[usedBuckets] = bucket;
-        usedBuckets += 1;
-        spatialHash.set(key, bucket);
-      }
-    }
-
-    return {
-      collisionCount,
-      grabbedCollisionCount,
-      predictedGrabCollisionCount,
-      maximumPenetration,
-    };
-  };
-
-  const applyGrabConstraint = () => {
-    if (!grabState) return 0;
-    let maximumGrabStress = 0;
-    const releaseStrength =
-      autoReleaseFramesRemaining > 0
-        ? autoReleaseFramesRemaining / (autoReleaseFrames + 1)
-        : 1;
-
-    for (const grabbed of grabState.particles) {
-      if (pinned[grabbed.index] === 1) continue;
-      const particle3 = grabbed.index * 3;
-      const targetX = grabState.targetX + grabbed.offsetX;
-      const targetY = grabState.targetY + grabbed.offsetY;
-      const targetZ = grabState.targetZ + grabbed.offsetZ;
-      const grabResponse = THREE.MathUtils.lerp(
-        0.78,
-        0.12,
-        grabSettings.resistance,
-      );
-      const influence =
-        grabResponse *
-        (0.18 + grabbed.weight * 0.82) *
-        releaseStrength;
-      const correctionX =
-        (targetX - positions[particle3]) * influence;
-      const correctionY =
-        (targetY - positions[particle3 + 1]) * influence;
-      const correctionZ =
-        (targetZ - positions[particle3 + 2]) * influence;
-      maximumGrabStress = Math.max(
-        maximumGrabStress,
-        Math.hypot(
-          targetX - positions[particle3],
-          targetY - positions[particle3 + 1],
-          targetZ - positions[particle3 + 2],
-        ),
-      );
-
-      positions[particle3] += correctionX;
-      positions[particle3 + 1] += correctionY;
-      positions[particle3 + 2] += correctionZ;
-      const previousCorrection =
-        1 - grabSettings.inertia * 0.6;
-      previousPositions[particle3] +=
-        correctionX * previousCorrection;
-      previousPositions[particle3 + 1] +=
-        correctionY * previousCorrection;
-      previousPositions[particle3 + 2] +=
-        correctionZ * previousCorrection;
-    }
-
-    return maximumGrabStress;
-  };
-
-  const step = (
-    delta: number,
-    wind: WindControls,
-    time: number,
-    transitionGust = 0,
-  ) => {
-    const substeps = 2;
-    const substep = Math.min(delta, 1 / 30) / substeps;
-    const squaredStep = substep * substep;
-    let midstepSelfCollisionRan = false;
-    let maximumPenetration = 0;
-    let maximumGrabbedCollisions = 0;
-    let maximumPredictedGrabCollisions = 0;
-    let maximumGrabStress = 0;
-
-    for (let substepIndex = 0; substepIndex < substeps; substepIndex += 1) {
-      const gustSignal =
-        Math.sin(time * 0.38 + 0.6) * 0.52 +
-        Math.sin(time * 0.91 + 2.1) * 0.3 +
-        Math.sin(time * 1.83 + 4.2) * 0.18;
-      const gustEnvelope = THREE.MathUtils.clamp(
-        1 + gustSignal * wind.gustiness * 0.55,
-        0.22,
-        1.75,
-      );
-      const effectiveWind =
-        (wind.strength + transitionGust * 1.35) * gustEnvelope;
-      const basePressure = 1 - Math.exp(-effectiveWind * 0.82);
-      const highWindPressure =
-        Math.log1p(Math.max(effectiveWind - 1, 0)) * 0.48;
-      const aerodynamicLoad = Math.min(
-        basePressure + highWindPressure,
-        3.2,
-      );
-
-      for (let row = 0; row <= rows; row += 1) {
-        for (let column = 0; column <= columns; column += 1) {
-          const particle = index(column, row);
-          if (pinned[particle] === 1) continue;
-
-          const particle3 = particle * 3;
-          const normalizedColumn = column / columns;
-          const normalizedRow = row / rows;
-          const distanceFromAnchor = hangsFromTop
-            ? normalizedRow
-            : normalizedColumn;
-          const currentX = positions[particle3];
-          const currentY = positions[particle3 + 1];
-          const currentZ = positions[particle3 + 2];
-          const velocityX = (currentX - previousPositions[particle3]) * 0.976;
-          const velocityY =
-            (currentY - previousPositions[particle3 + 1]) * 0.976;
-          const velocityZ =
-            (currentZ - previousPositions[particle3 + 2]) * 0.968;
-
-          previousPositions[particle3] = currentX;
-          previousPositions[particle3 + 1] = currentY;
-          previousPositions[particle3 + 2] = currentZ;
-
-          const flutter =
-            Math.sin(time * 5.2 + normalizedRow * 17 + normalizedColumn * 9) *
-              0.62 +
-            Math.sin(time * 8.7 - normalizedRow * 23 + normalizedColumn * 15) *
-              0.38;
-          const wake =
-            Math.sin(
-              time * 2.1 +
-              (hangsFromTop ? normalizedColumn : normalizedRow) * 8.4,
-            ) *
-            Math.pow(distanceFromAnchor, 2.4);
-          const windPull =
-            aerodynamicLoad *
-            (
-              hangsFromTop
-                ? 0.48 + distanceFromAnchor * 0.38
-                : 7.4 + distanceFromAnchor * 2.4
-            );
-          const turbulenceForce =
-            aerodynamicLoad *
-            (wind.turbulence + transitionGust * 1.8) *
-            (flutter * 0.62 + wake * 0.38) *
-            distanceFromAnchor *
-            (hangsFromTop ? 0.4 : 1.25);
-
-          if (hangsFromTop) {
-            positions[particle3] =
-              currentX +
-              velocityX +
-              turbulenceForce * 0.08 * squaredStep;
-            positions[particle3 + 1] =
-              currentY +
-              velocityY +
-              (
-                -wind.gravity * 3.15 +
-                wind.direction * aerodynamicLoad * 0.34
-              ) *
-                squaredStep;
-            positions[particle3 + 2] =
-              currentZ +
-              velocityZ +
-              (windPull + turbulenceForce * 0.55) * squaredStep;
-          } else {
-            positions[particle3] =
-              currentX + velocityX + windPull * squaredStep;
-            positions[particle3 + 1] =
-              currentY +
-              velocityY +
-              (
-                -wind.gravity * 3.15 +
-                wind.direction * aerodynamicLoad * 2.4
-              ) *
-                squaredStep;
-            positions[particle3 + 2] =
-              currentZ + velocityZ + turbulenceForce * squaredStep;
-          }
-        }
-      }
-
-      const constraintIterations =
-        baseConstraintIterations + (tornEnabled ? 1 : 0);
-      for (
-        let iteration = 0;
-        iteration < constraintIterations;
-        iteration += 1
-      ) {
-        solveConstraints();
-      }
-      solveConstraints();
-
-      for (const particle of pinnedVertices) {
-        const pinnedVertex = particle * 3;
-        positions[pinnedVertex] = restPositions[pinnedVertex];
-        positions[pinnedVertex + 1] = restPositions[pinnedVertex + 1];
-        positions[pinnedVertex + 2] = restPositions[pinnedVertex + 2];
-      }
-      applySoftPinConstraints();
-      maximumGrabStress = Math.max(
-        maximumGrabStress,
-        applyGrabConstraint(),
-      );
-
-      const useMidstepSelfCollision =
-        grabState !== null &&
-        (
-          resolutionSpan <= 72 ||
-          (substepIndex === 0 && simulationFrame % 2 === 0)
-        );
-      if (useMidstepSelfCollision) {
-        const collisionResult = solveSelfCollisions();
-        maximumPenetration = Math.max(
-          maximumPenetration,
-          collisionResult.maximumPenetration,
-        );
-        maximumGrabbedCollisions = Math.max(
-          maximumGrabbedCollisions,
-          collisionResult.grabbedCollisionCount,
-        );
-        maximumPredictedGrabCollisions = Math.max(
-          maximumPredictedGrabCollisions,
-          collisionResult.predictedGrabCollisionCount,
-        );
-        midstepSelfCollisionRan = true;
-      }
-    }
-
-    simulationFrame += 1;
-    const selfCollisionCadence =
-      grabState !== null || resolutionSpan <= 48
-        ? 1
-        : resolutionSpan <= 72
-          ? 2
-          : 3;
-    solveConstraints();
-    applySoftPinConstraints();
-    maximumGrabStress = Math.max(
-      maximumGrabStress,
-      applyGrabConstraint(),
-    );
-    if (simulationFrame % selfCollisionCadence === 0) {
-      const collisionsResolved = solveSelfCollisions();
-      maximumPenetration = Math.max(
-        maximumPenetration,
-        collisionsResolved.maximumPenetration,
-      );
-      maximumGrabbedCollisions = Math.max(
-        maximumGrabbedCollisions,
-        collisionsResolved.grabbedCollisionCount,
-      );
-      maximumPredictedGrabCollisions = Math.max(
-        maximumPredictedGrabCollisions,
-        collisionsResolved.predictedGrabCollisionCount,
-      );
-      const needsAdaptiveSecondPass =
-        !midstepSelfCollisionRan &&
-        resolutionSpan <= 72 &&
-        collisionsResolved.collisionCount >
-          Math.max(12, vertexCount * 0.004);
-      if (needsAdaptiveSecondPass) {
-        const secondPass = solveSelfCollisions();
-        maximumPenetration = Math.max(
-          maximumPenetration,
-          secondPass.maximumPenetration,
-        );
-        maximumGrabbedCollisions = Math.max(
-          maximumGrabbedCollisions,
-          secondPass.grabbedCollisionCount,
-        );
-        maximumPredictedGrabCollisions = Math.max(
-          maximumPredictedGrabCollisions,
-          secondPass.predictedGrabCollisionCount,
-        );
-      }
-    }
-
-    let releasedGrab = false;
-    if (grabState && autoReleaseFramesRemaining === 0) {
-      const grabbedParticleCount = grabState.particles.length;
-      const collisionOverloadThreshold = Math.max(
-        10,
-        grabbedParticleCount * 0.24,
-      );
-      const imminentCollisionThreshold = Math.max(
-        6,
-        grabbedParticleCount * 0.12,
-      );
-      const catastrophicPenetration =
-        maximumPenetration > 0.78 ||
-        maximumGrabStress > 1.25;
-      const unsafeCollision =
-        (
-          maximumPenetration > 0.56 &&
-          maximumGrabbedCollisions >= 3
-        ) ||
-        (
-          maximumPenetration > 0.34 &&
-          maximumGrabbedCollisions >
-            collisionOverloadThreshold
-        ) ||
-        maximumPredictedGrabCollisions >
-          imminentCollisionThreshold ||
-        (
-          maximumGrabStress > 0.72 &&
-          (
-            maximumGrabbedCollisions > 0 ||
-            maximumPredictedGrabCollisions > 0
-          )
-        ) ||
-        maximumGrabStress > 0.95;
-
-      unsafeGrabFrames = unsafeCollision
-        ? unsafeGrabFrames + 1
-        : Math.max(unsafeGrabFrames - 1, 0);
-
-      if (catastrophicPenetration || unsafeGrabFrames >= 2) {
-        autoReleaseFramesRemaining = autoReleaseFrames;
-        for (let particle = 0; particle < vertexCount; particle += 1) {
-          if (pinned[particle] === 1) continue;
-          const particle3 = particle * 3;
-          const velocityRetention = THREE.MathUtils.lerp(
-            0.48,
-            0.12,
-            grabInfluence[particle],
-          );
-          previousPositions[particle3] =
-            positions[particle3] -
-            (
-              positions[particle3] -
-              previousPositions[particle3]
-            ) *
-              velocityRetention;
-          previousPositions[particle3 + 1] =
-            positions[particle3 + 1] -
-            (
-              positions[particle3 + 1] -
-              previousPositions[particle3 + 1]
-            ) *
-              velocityRetention;
-          previousPositions[particle3 + 2] =
-            positions[particle3 + 2] -
-            (
-              positions[particle3 + 2] -
-              previousPositions[particle3 + 2]
-            ) *
-              velocityRetention;
-        }
-        unsafeGrabFrames = 0;
-        releasedGrab = true;
-      }
-    } else if (!grabState) {
-      unsafeGrabFrames = 0;
-    }
-
-    if (autoReleaseFramesRemaining > 0) {
-      autoReleaseFramesRemaining -= 1;
-      if (autoReleaseFramesRemaining === 0) {
-        grabState = null;
-        grabInfluence.fill(0);
-      }
-    }
-
-    const columnSampleStep = Math.max(1, Math.floor(columns / 12));
-    const rowSampleStep = Math.max(1, Math.floor(rows / 8));
-    const sampleTime = Math.max(substep, 1 / 240);
-    let velocitySum = 0;
-    let absoluteVelocitySum = 0;
-    let audioSamples = 0;
-
-    if (hangsFromTop) {
-      const firstSampleRow = Math.floor(rows * 0.55);
-      for (
-        let row = firstSampleRow;
-        row <= rows;
-        row += rowSampleStep
-      ) {
-        for (
-          let column = 0;
-          column <= columns;
-          column += columnSampleStep
-        ) {
-          const particle3 = index(column, row) * 3;
-          const velocityZ =
-            (
-              positions[particle3 + 2] -
-              previousPositions[particle3 + 2]
-            ) /
-            sampleTime;
-          velocitySum += velocityZ;
-          absoluteVelocitySum += Math.abs(velocityZ);
-          audioSamples += 1;
-        }
-      }
-    } else {
-      const firstSampleColumn = Math.floor(columns * 0.55);
-      for (let row = 0; row <= rows; row += rowSampleStep) {
-        for (
-          let column = firstSampleColumn;
-          column <= columns;
-          column += columnSampleStep
-        ) {
-          const particle3 = index(column, row) * 3;
-          const velocityZ =
-            (
-              positions[particle3 + 2] -
-              previousPositions[particle3 + 2]
-            ) /
-            sampleTime;
-          velocitySum += velocityZ;
-          absoluteVelocitySum += Math.abs(velocityZ);
-          audioSamples += 1;
-        }
-      }
-    }
-
-    const freeEdgeVelocity = velocitySum / Math.max(audioSamples, 1);
-    const meanMotion = absoluteVelocitySum / Math.max(audioSamples, 1);
-    const motion = 1 - Math.exp(-meanMotion * 0.42);
-    const velocityChange = Math.abs(
-      freeEdgeVelocity - lastFreeEdgeVelocity,
-    );
-    const reversedDirection =
-      freeEdgeVelocity * lastFreeEdgeVelocity < -0.012;
-    const reversalImpact = reversedDirection
-      ? Math.min(velocityChange * 0.22, 1)
-      : 0;
-    const motionSurge = Math.max(motion - lastMotionEnergy - 0.035, 0) * 1.6;
-    const impact = THREE.MathUtils.clamp(
-      reversalImpact + motionSurge,
-      0,
-      1,
-    );
-    lastFreeEdgeVelocity = freeEdgeVelocity;
-    lastMotionEnergy = motion;
-
-    geometry.computeVertexNormals();
-    positionAttribute.needsUpdate = true;
-    geometry.getAttribute("normal").needsUpdate = true;
-    return {
-      motion,
-      impact,
-      releasedGrab,
-    } satisfies ClothStepMetrics;
-  };
-
-  const poke = (u: number, v: number, strength = 0.32) => {
-    const radius = 0.2;
-    const aspectCorrection = layout.width / layout.height;
-
-    for (let particle = 0; particle < vertexCount; particle += 1) {
-      if (pinned[particle] === 1) continue;
-      const deltaU = (uvAttribute.getX(particle) - u) * aspectCorrection;
-      const deltaV = uvAttribute.getY(particle) - v;
-      const distance = Math.hypot(deltaU, deltaV);
-      if (distance >= radius) continue;
-
-      const normalizedDistance = distance / radius;
-      const falloff =
-        Math.cos(normalizedDistance * Math.PI * 0.5) ** 2;
-      const particle3 = particle * 3;
-      positions[particle3 + 2] -= strength * falloff * 0.18;
-      previousPositions[particle3 + 2] +=
-        strength * falloff * 0.32;
-    }
-
-    geometry.computeVertexNormals();
-    positionAttribute.needsUpdate = true;
-    geometry.getAttribute("normal").needsUpdate = true;
-  };
-
-  const beginGrab = (
-    u: number,
-    v: number,
-    targetX: number,
-    targetY: number,
-    targetZ: number,
-  ) => {
-    const radius = grabSettings.radius;
-    const aspectCorrection = layout.width / layout.height;
-    const particles: NonNullable<typeof grabState>["particles"] = [];
-    grabInfluence.fill(0);
-
-    for (let particle = 0; particle < vertexCount; particle += 1) {
-      if (pinned[particle] === 1) continue;
-      const deltaU =
-        (uvAttribute.getX(particle) - u) * aspectCorrection;
-      const deltaV = uvAttribute.getY(particle) - v;
-      const distance = Math.hypot(deltaU, deltaV);
-      if (distance >= radius) continue;
-
-      const normalizedDistance = distance / radius;
-      const weight =
-        Math.cos(normalizedDistance * Math.PI * 0.5) ** 2;
-      const particle3 = particle * 3;
-      grabInfluence[particle] = weight;
-      particles.push({
-        index: particle,
-        offsetX: positions[particle3] - targetX,
-        offsetY: positions[particle3 + 1] - targetY,
-        offsetZ: positions[particle3 + 2] - targetZ,
-        weight,
-      });
-      previousPositions[particle3] = positions[particle3];
-      previousPositions[particle3 + 1] = positions[particle3 + 1];
-      previousPositions[particle3 + 2] = positions[particle3 + 2];
-    }
-
-    if (particles.length === 0) return false;
-    grabState = {
-      targetX,
-      targetY,
-      targetZ,
-      particles,
-    };
-    unsafeGrabFrames = 0;
-    autoReleaseFramesRemaining = 0;
-    return true;
-  };
-
-  const moveGrab = (targetX: number, targetY: number, targetZ: number) => {
-    if (!grabState) return;
-    grabState.targetX = targetX;
-    grabState.targetY = targetY;
-    grabState.targetZ = targetZ;
-  };
-
-  const releaseGrab = () => {
-    grabState = null;
-    grabInfluence.fill(0);
-    unsafeGrabFrames = 0;
-    autoReleaseFramesRemaining = 0;
-  };
-
-  const setGrabSettings = (settings: GrabControls) => {
-    grabSettings = { ...settings };
-  };
-
-  reset();
-  return {
-    reset,
-    step,
-    poke,
-    beginGrab,
-    moveGrab,
-    releaseGrab,
-    setGrabSettings,
-    setTorn: (enabled: boolean) => {
-      tornEnabled = enabled;
-    },
-  };
-}
+import {
+  type WindControls,
+  type MaterialControls,
+  type GrabControls,
+  type LightingControls,
+  type WindSoundControls,
+  type ClothAudioMetrics,
+  type TransitionOrigin,
+  type ClothGrabController,
+  type DesignTransition,
+  type WindAudioEngine,
+  type DesignPreset,
+  type BackgroundControls,
+  type FocusControls,
+  type MoodPreset,
+  type ControlTab,
+  type MeshQuality,
+  type TransitionMode,
+  INITIAL_WIND,
+  INITIAL_FLAG_SIZE,
+  INITIAL_ARTWORK_SCALE,
+  INITIAL_MESH_QUALITY,
+  INITIAL_TRANSITION_MODE,
+  MAX_ARTWORK_FILE_SIZE,
+  MAX_ARTWORK_DIMENSION,
+  ALLOWED_ARTWORK_TYPES,
+  DEFAULT_TRANSITION_ORIGIN,
+  LANDSCAPE_CLOTH,
+  MOBILE_ARTWORK_SCALE_MULTIPLIER,
+  MOBILE_ARTWORK_VERTICAL_OFFSET,
+  FOCUS_BLUR_SCALE,
+  SHADOW_BLUR_SCALE_MOBILE,
+  SHADOW_BLUR_SCALE_DESKTOP,
+  SHADOW_BLUR_RADIUS,
+  INITIAL_FOCUS,
+  PORTRAIT_CLOTH,
+  MOBILE_PORTRAIT_QUERY,
+  INITIAL_MATERIAL,
+  INITIAL_GRAB,
+  INITIAL_WIND_SOUND,
+  INITIAL_LIGHTING,
+  CUSTOM_MOODS_STORAGE_KEY,
+  DEFAULT_MOODS,
+  moodSettingsSignature,
+  loadCustomMoods,
+  getBackgroundControls,
+  DESIGN_PRESETS,
+  INITIAL_DESIGN,
+  getTransitionModeValue,
+} from "./studio/config";
+import {
+  vertexShader,
+  fragmentShader,
+  edgeVertexShader,
+  edgeFragmentShader,
+  clothShadowVertexShader,
+  clothShadowFragmentShader,
+  clothShadowCompositeFragmentShader,
+  focusBlurFragmentShader,
+  focusCompositeFragmentShader,
+} from "./studio/shaders";
+import { createEmptyArtwork, designImageCache, drawArtworkImage, resizeArtwork } from "./studio/artwork";
+import { createClothEdgeGeometry } from "./cloth/topology";
+import { FrameSamples, GpuTimer } from "./studio/performance";
+import { ClothSimulation } from "./cloth/simulation";
+import { createClothSurface, physicsResolution } from "./cloth/surface";
+
+const StudioControls = __LOCAL_CONTROLS__ ? lazy(() => import("@local-controls")) : null;
 
 export function FlagStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fpsRef = useRef<HTMLSpanElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const designSwitcherRef = useRef<HTMLElement>(null);
   const identityMotionRef = useRef<HTMLDivElement>(null);
   const navigationPressAnimationRef = useRef<Animation | null>(null);
@@ -2748,7 +168,18 @@ export function FlagStudio() {
   );
   const simulationResetRef = useRef<() => void>(() => undefined);
   const resizeStageRef = useRef<() => void>(() => undefined);
-  const pauseRef = useRef(false);
+  const audioMountedRef = useRef(true);
+  const pauseRef = useRef(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const invalidateSceneRef = useRef<() => void>(() => undefined);
+  const physicsMaterialRef = useRef<(thickness: number, preset: number) => void>(() => undefined);
+  const cancelGrabRef = useRef<() => void>(() => undefined);
+  const [artworkError, setArtworkError] = useState<string | null>(null);
+  const [retryDesign, setRetryDesign] = useState<string | null>(null);
+  const uploadUrlRef = useRef<string | null>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
+  const [rendererGeneration, setRendererGeneration] = useState(0);
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const reducedMotionRef = useRef(reducedMotion);
   const simulationSettingsRef = useRef({
     wind: INITIAL_WIND,
     flagSize: INITIAL_FLAG_SIZE,
@@ -2785,8 +216,9 @@ export function FlagStudio() {
   );
   const [tornMode, setTornMode] = useState(false);
   const [premiereLightsEnabled, setPremiereLightsEnabled] = useState(true);
-  const [paused, setPaused] = useState(false);
+  const [paused, setPaused] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [isLoading, setIsLoading] = useState(true);
+  const [sceneRevealed, setSceneRevealed] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [isNavigationDragging, setIsNavigationDragging] = useState(false);
   const [windSoundEnabled, setWindSoundEnabled] = useState(false);
@@ -2794,7 +226,7 @@ export function FlagStudio() {
   const [windSound, setWindSound] = useState(INITIAL_WIND_SOUND);
   const [artworkName, setArtworkName] = useState(INITIAL_DESIGN.label);
   const [customMoods, setCustomMoods] = useState<MoodPreset[]>(
-    loadCustomMoods,
+    () => __LOCAL_CONTROLS__ ? loadCustomMoods() : [],
   );
   const [appliedMoodId, setAppliedMoodId] = useState<string | null>(
     "editorial",
@@ -2805,7 +237,7 @@ export function FlagStudio() {
     () => window.matchMedia(MOBILE_PORTRAIT_QUERY).matches,
   );
   const allMoods = useMemo(
-    () => [...DEFAULT_MOODS, ...customMoods],
+    () => __LOCAL_CONTROLS__ ? [...DEFAULT_MOODS, ...customMoods] : [],
     [customMoods],
   );
   const appliedMood = allMoods.find((mood) => mood.id === appliedMoodId);
@@ -2821,6 +253,7 @@ export function FlagStudio() {
       : null;
 
   useEffect(() => {
+    if (!__LOCAL_CONTROLS__) return;
     try {
       window.localStorage.setItem(
         CUSTOM_MOODS_STORAGE_KEY,
@@ -2954,6 +387,7 @@ export function FlagStudio() {
   }, []);
 
   useEffect(() => {
+    if (!__LOCAL_CONTROLS__) return;
     const handleControlsShortcut = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
@@ -3093,29 +527,32 @@ export function FlagStudio() {
     const settings = simulationSettingsRef.current;
     setIsLoading(true);
     let disposed = false;
-    let hasRendered = false;
+    let firstFramePending = true;
     let artworkReady = false;
-    const completeLoading = () => {
-      if (!disposed && hasRendered && artworkReady) {
-        window.requestAnimationFrame(() => {
-          if (!disposed) setIsLoading(false);
-        });
-      }
-    };
 
-    const prefersReducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    let prefersReducedMotion = reducedMotionRef.current;
     const supportsHoverFocus = window.matchMedia(
       "(hover: hover) and (pointer: fine)",
     ).matches;
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "default" });
+    } catch {
+      queueMicrotask(() => {
+        if (!disposed) { setIsLoading(false); setWebglError("La vista 3D no está disponible en este dispositivo."); }
+      });
+      return () => { disposed = true; };
+    }
+    queueMicrotask(() => { if (!disposed) setWebglError(null); });
+    const gpuTimer = __LOCAL_CONTROLS__ ? new GpuTimer(renderer.getContext()) : null;
+    const physicsSamples = new FrameSamples();
+    const renderSamples = __LOCAL_CONTROLS__ ? new FrameSamples() : null;
+    const frameSamples = __LOCAL_CONTROLS__ ? new FrameSamples() : null;
+    let scheduleRender = () => {};
+    let sceneDirty = true;
+    const invalidate = () => { sceneDirty = true; scheduleRender(); };
+    invalidateSceneRef.current = invalidate;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(0x000000, 0);
 
@@ -3393,6 +830,7 @@ export function FlagStudio() {
         nextPalette.intensity,
       );
 
+      invalidate();
       if (prefersReducedMotion) {
         backgroundUniforms.uBackgroundMix.value = 1;
         return;
@@ -3402,6 +840,7 @@ export function FlagStudio() {
       const startedAt = performance.now();
       const duration = 1080;
       const animateBackgroundTransition = (now: number) => {
+        invalidate();
         const progress = THREE.MathUtils.clamp(
           (now - startedAt) / duration,
           0,
@@ -3429,48 +868,18 @@ export function FlagStudio() {
       backgroundNeedsRender = true;
     };
 
-    const baseResolution = MESH_RESOLUTIONS[meshQuality];
-    const columns = usesPortraitCloth
-      ? baseResolution.rows
-      : baseResolution.columns;
-    const rows = usesPortraitCloth
-      ? Math.round(
-          columns / (2 * MOBILE_PENNANT_POINT_HEIGHT),
-        )
-      : baseResolution.rows;
-    const pointedPennantHeight = usesPortraitCloth
-      ? columns / (2 * rows)
-      : 0;
-
-    const geometry = new THREE.PlaneGeometry(
-      clothLayout.width,
-      clothLayout.height,
-      columns,
-      rows,
+    const { columns, rows } = physicsResolution(meshQuality, usesPortraitCloth);
+    const surface = createClothSurface(clothLayout, columns, rows, meshQuality === 1 ? 2 : 3);
+    const { geometry, intactIndex, tornIndex } = surface;
+    const clothSimulation = new ClothSimulation(
+      surface.physical.getAttribute("position").array as Float32Array,
+      columns, rows, clothLayout,
+      surface.intact.array as Uint16Array,
+      surface.torn.array as Uint16Array,
     );
-    const intactIndex = createClothIndex(
-      geometry,
-      columns,
-      rows,
-      clothLayout.anchor,
-      pointedPennantHeight,
-      false,
-    );
-    const tornIndex = createClothIndex(
-      geometry,
-      columns,
-      rows,
-      clothLayout.anchor,
-      pointedPennantHeight,
-      true,
-    );
-    if (!intactIndex || !tornIndex) return;
-    const clothSimulation = createClothSimulation(
-      geometry,
-      columns,
-      rows,
-      clothLayout,
-    );
+    clothSimulation.configureMaterial(settings.material.thickness, settings.material.preset);
+    physicsMaterialRef.current = (thickness, preset) => clothSimulation.configureMaterial(thickness, preset);
+    surface.update(clothSimulation.renderPositions, clothSimulation.normals);
     const intactClothEdge = createClothEdgeGeometry(
       geometry,
       intactIndex,
@@ -3479,6 +888,7 @@ export function FlagStudio() {
     let activeClothEdge = intactClothEdge;
     simulationResetRef.current = () => {
       clothSimulation.reset();
+      surface.update(clothSimulation.renderPositions, clothSimulation.normals);
       activeClothEdge.update();
     };
     clothPokeRef.current = (u, v) => {
@@ -3547,7 +957,7 @@ export function FlagStudio() {
       const initialImage =
         designImageCache.get(selectedDesign.asset) ?? new Image();
       initialImage.onload = () => {
-        if (designLoadRef.current !== initialLoadToken) return;
+        if (disposed || designLoadRef.current !== initialLoadToken) return;
         designImageCache.set(selectedDesign.asset, initialImage);
         artworkImageRef.current = initialImage;
         drawArtworkImage(
@@ -3561,12 +971,14 @@ export function FlagStudio() {
         copyCurrentArtworkToPrevious();
         setArtworkName(selectedDesign.label);
         artworkReady = true;
-        completeLoading();
+        invalidate();
       };
       initialImage.onerror = () => {
-        if (designLoadRef.current !== initialLoadToken) return;
+        if (disposed || designLoadRef.current !== initialLoadToken) return;
         artworkReady = true;
-        completeLoading();
+        setArtworkError("No se pudo cargar el diseño. Podés reintentarlo.");
+        setRetryDesign(selectedDesign.id);
+        invalidate();
       };
       if (initialImage.complete && initialImage.naturalWidth > 0) {
         initialImage.onload?.(new Event("load"));
@@ -3620,6 +1032,7 @@ export function FlagStudio() {
       uTextureScale: { value: settings.material.scale },
       uThickness: { value: settings.material.thickness },
       uNormalStrength: { value: settings.material.normalStrength },
+      uDetailQuality: { value: meshQuality === 1 ? 0 : 1 },
       uBumpStrength: { value: settings.material.bumpStrength },
       uRoughness: { value: settings.material.roughness },
       uSheenIntensity: { value: settings.material.sheenIntensity },
@@ -3689,6 +1102,7 @@ export function FlagStudio() {
         1 - (safeOrigin.screenY ?? 0.5),
       );
 
+      invalidate();
       if (prefersReducedMotion) {
         uniforms.uDesignTransition.value = 1;
         uniforms.uTransitionScale.value = 1;
@@ -3700,6 +1114,7 @@ export function FlagStudio() {
       const startedAt = performance.now();
       const duration = 820;
       const animateTransition = (now: number) => {
+        invalidate();
         const progress = THREE.MathUtils.clamp(
           (now - startedAt) / duration,
           0,
@@ -3920,8 +1335,10 @@ export function FlagStudio() {
       activeClothEdge = enabled ? tornClothEdge : intactClothEdge;
       edgeSurface.geometry = activeClothEdge.geometry;
       clothSimulation.reset();
+      surface.update(clothSimulation.renderPositions, clothSimulation.normals);
       activeClothEdge.update();
       geometry.computeBoundingSphere();
+      invalidate();
     };
 
     const pointer = new THREE.Vector2();
@@ -3945,10 +1362,9 @@ export function FlagStudio() {
       screenY: 0.5,
       grabbed: false,
     };
-    const timer = new THREE.Timer();
-    timer.connect(document);
     let animationFrame = 0;
-    let simulationTime = 0;
+    let lastTimestamp: number | null = null;
+    let physicsBudget = 4;
     let fpsFrames = 0;
     let fpsElapsed = 0;
     let renderScale = 1;
@@ -4102,6 +1518,7 @@ export function FlagStudio() {
               : 6.6;
       }
       camera.updateProjectionMatrix();
+      invalidate();
     };
     resizeStageRef.current = resize;
 
@@ -4135,6 +1552,7 @@ export function FlagStudio() {
     };
 
     const handlePointer = (event: PointerEvent) => {
+      invalidate();
       const bounds = canvas.getBoundingClientRect();
       if (supportsHoverFocus && focusControlsRef.current.enabled) {
         focusPointerTarget.set(
@@ -4173,7 +1591,7 @@ export function FlagStudio() {
         if (tapRaycaster.ray.intersectPlane(dragPlane, dragWorldPoint)) {
           const visualScale = Math.max(getVisualFlagScale(), 0.001);
           const localPoint = flag
-            .worldToLocal(dragWorldPoint.clone())
+            .worldToLocal(dragWorldPoint)
             .divideScalar(visualScale);
           clothGrabRef.current.move(
             localPoint.x,
@@ -4193,9 +1611,11 @@ export function FlagStudio() {
     const handlePointerLeave = () => {
       if (!tapStart.grabbed) pointerTarget.set(0, 0);
       focusAmountTarget = 0;
+      invalidate();
     };
     const handleCanvasPointerDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
+      if (!event.isPrimary || event.button !== 0 || pauseRef.current) return;
+      invalidate();
       const { intersection, visualScale } = intersectFlag(
         event.clientX,
         event.clientY,
@@ -4204,7 +1624,7 @@ export function FlagStudio() {
       tapStart.x = event.clientX;
       tapStart.y = event.clientY;
       tapStart.grabbed = false;
-      delete canvas.dataset.autoReleased;
+      if (__LOCAL_CONTROLS__) delete canvas.dataset.autoReleased;
       const bounds = canvas.getBoundingClientRect();
       tapStart.screenX = THREE.MathUtils.clamp(
         (event.clientX - bounds.left) / Math.max(bounds.width, 1),
@@ -4283,65 +1703,89 @@ export function FlagStudio() {
         );
       }
     };
-    const handleCanvasPointerCancel = (event: PointerEvent) => {
-      if (tapStart.pointerId === event.pointerId) {
-        tapStart.pointerId = null;
-        tapStart.grabbed = false;
-        clothGrabRef.current.end();
-        canvas.classList.remove("is-grab-ready", "is-grabbing");
-      }
+    const cancelGrab = () => {
+      const pointerId = tapStart.pointerId;
+      tapStart.pointerId = null; tapStart.grabbed = false;
+      clothSimulation.releaseGrab();
+      canvas.classList.remove("is-grab-ready", "is-grabbing");
+      if (pointerId !== null && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+      invalidate();
     };
+    cancelGrabRef.current = cancelGrab;
+    const handleCanvasPointerCancel = (event: PointerEvent) => {
+      if (tapStart.pointerId === event.pointerId) cancelGrab();
+    };
+    const handleVisibility = () => {
+      cancelGrab(); clothSimulation.resetClock(); lastTimestamp = null;
+      fpsFrames = 0; fpsElapsed = 0;
+      if (document.hidden) { window.cancelAnimationFrame(animationFrame); animationFrame = 0; }
+      else invalidate();
+    };
+    const handleContextLost = (event: Event) => {
+      event.preventDefault(); cancelGrab();
+      window.cancelAnimationFrame(animationFrame); animationFrame = 0;
+      setWebglError("La vista 3D se interrumpió. Podés reintentar o seguir con la vista estática.");
+    };
+    const handleContextRestored = () => setRendererGeneration((value) => value + 1);
 
     const render = (timestamp?: number) => {
-      animationFrame = window.requestAnimationFrame(render);
-      timer.update(timestamp);
-      const rawDelta = timer.getDelta();
+      animationFrame = 0;
+      if (disposed || document.hidden || renderer.getContext().isContextLost()) return;
+      const renderStarted = __LOCAL_CONTROLS__ ? performance.now() : 0;
+      prefersReducedMotion = reducedMotionRef.current;
+      const now = timestamp ?? performance.now();
+      const rawDelta = lastTimestamp === null ? 0 : Math.max(0, (now - lastTimestamp) / 1000);
       const delta = Math.min(rawDelta, 0.05);
+      lastTimestamp = now;
+      if (rawDelta > 0 && !pauseRef.current) frameSamples?.add(rawDelta * 1000);
       fpsFrames += 1;
       fpsElapsed += rawDelta;
       if (fpsElapsed >= 0.75) {
         const measuredFps = fpsFrames / fpsElapsed;
-        if (fpsRef.current) {
-          fpsRef.current.textContent = `${Math.round(measuredFps)} FPS`;
+        const cpu = physicsSamples.summary();
+        if (__LOCAL_CONTROLS__ && fpsRef.current && gpuTimer && frameSamples && renderSamples) {
+          const gpu = gpuTimer.samples.summary();
+          const frames = frameSamples.summary();
+          fpsRef.current.textContent = `${Math.round(measuredFps)} FPS · Física ${cpu.median.toFixed(1)} ms · P95 ${frames.p95.toFixed(1)} ms`;
+          fpsRef.current.title = `Física P95: ${cpu.p95.toFixed(1)} ms · ${gpuTimer.available ? `GPU: ${gpu.median.toFixed(1)} ms` : `Envío de render CPU: ${renderSamples.summary().median.toFixed(1)} ms`}`;
         }
         if (measuredFps < 50) {
-          lowFpsIntervals += 1;
-          highFpsIntervals = 0;
-          if (lowFpsIntervals >= 2 && renderScale > 0.76) {
-            renderScale = Math.max(0.75, renderScale - 0.1);
+          lowFpsIntervals++; highFpsIntervals = 0;
+          if (lowFpsIntervals >= 3) {
+            if (cpu.median > 5 && physicsBudget > 3) {
+              physicsBudget--; clothSimulation.setBudget(physicsBudget);
+            } else if (renderScale > .76) {
+              renderScale = Math.max(.75, renderScale - .1);
+              uniforms.uDetailQuality.value = renderScale <= .85 || meshQuality === 1 ? 0 : 1;
+              resize();
+            }
             lowFpsIntervals = 0;
-            resize();
           }
-        } else if (measuredFps > 58 && renderScale < 0.99) {
-          highFpsIntervals += 1;
-          lowFpsIntervals = 0;
-          if (highFpsIntervals >= 4) {
-            renderScale = Math.min(1, renderScale + 0.05);
+        } else if (measuredFps > 58) {
+          highFpsIntervals++; lowFpsIntervals = 0;
+          if (highFpsIntervals >= 8) {
+            if (physicsBudget < 4 && cpu.p95 < 4) { physicsBudget++; clothSimulation.setBudget(physicsBudget); }
+            else if (renderScale < .99) { renderScale = Math.min(1, renderScale + .05); uniforms.uDetailQuality.value = renderScale <= .85 || meshQuality === 1 ? 0 : 1; resize(); }
             highFpsIntervals = 0;
-            resize();
           }
-        } else {
-          lowFpsIntervals = 0;
-          highFpsIntervals = 0;
-        }
+        } else { lowFpsIntervals = 0; highFpsIntervals = 0; }
         fpsFrames = 0;
         fpsElapsed = 0;
       }
       if (!pauseRef.current) {
         uniforms.uTime.value += delta;
-        const safeSpeed = THREE.MathUtils.clamp(windRef.current.speed, 0.01, 300);
-        simulationTime = (simulationTime + delta * safeSpeed) % 10000;
-        const clothMetrics = clothSimulation.step(
-          delta,
-          windRef.current,
-          simulationTime,
-          transitionGustRef.current,
-        );
+        clothSimulation.setAudioEnabled(windLayerEnabledRef.current || clothLayerEnabledRef.current);
+        const currentWind = windRef.current;
+        const effectiveWind = prefersReducedMotion
+          ? { ...currentWind, strength: currentWind.strength * .35, turbulence: currentWind.turbulence * .25, speed: currentWind.speed * .4 }
+          : currentWind;
+        const clothMetrics = clothSimulation.step(delta, effectiveWind, transitionGustRef.current);
+        if (clothSimulation.timings.steps) physicsSamples.add(clothSimulation.timings.total);
         if (clothMetrics.releasedGrab && tapStart.grabbed) {
           const releasedPointerId = tapStart.pointerId;
           tapStart.pointerId = null;
           tapStart.grabbed = false;
-          canvas.dataset.autoReleased = "collision";
+          if (__LOCAL_CONTROLS__) canvas.dataset.autoReleased = "collision";
           canvas.classList.remove(
             "is-grab-ready",
             "is-grabbing",
@@ -4361,22 +1805,25 @@ export function FlagStudio() {
             clothAudioRef.current.impact * 0.92,
           ),
         };
+        surface.update(clothSimulation.renderPositions, clothSimulation.normals);
         activeClothEdge.update();
       } else {
         clothAudioRef.current = { motion: 0, impact: 0 };
       }
 
-      pointer.lerp(pointerTarget, 0.045);
+      const visualDelta = delta || 1 / 60;
+      const pointerMoving = pointer.distanceToSquared(pointerTarget) > .000001;
+      pointer.lerp(pointerTarget, 1 - Math.exp(-2.8 * visualDelta));
       const currentFocusControls = focusControlsRef.current;
       if (!currentFocusControls.enabled) focusAmountTarget = 0;
       const focusFollow = prefersReducedMotion
         ? 1
-        : 1 - Math.exp(-delta * currentFocusControls.follow);
+        : 1 - Math.exp(-visualDelta * currentFocusControls.follow);
       const focusFade = prefersReducedMotion
         ? 1
         : 1 -
           Math.exp(
-            -delta * Math.max(6, currentFocusControls.follow * 0.72),
+            -visualDelta * Math.max(6, currentFocusControls.follow * 0.72),
           );
       focusPointer.lerp(focusPointerTarget, focusFollow);
       focusAmount = THREE.MathUtils.lerp(
@@ -4415,18 +1862,25 @@ export function FlagStudio() {
       flag.rotation.y = THREE.MathUtils.lerp(
         flag.rotation.y,
         baseFlagRotationY + pointer.x * 0.08,
-        0.04,
+        1 - Math.exp(-2.5 * visualDelta),
       );
-      flag.rotation.x = THREE.MathUtils.lerp(flag.rotation.x, -0.025 - pointer.y * 0.045, 0.04);
+      flag.rotation.x = THREE.MathUtils.lerp(flag.rotation.x, -0.025 - pointer.y * 0.045, 1 - Math.exp(-2.5 * visualDelta));
       backgroundUniforms.uBackgroundTime.value =
         uniforms.uTime.value;
       (
         backgroundUniforms.uBackgroundPointer.value as THREE.Vector2
       ).copy(pointer);
+      const moving = !pauseRef.current;
+      const transitioning = uniforms.uDesignTransition.value < .999 || backgroundUniforms.uBackgroundMix.value < .999;
+      const focusMoving = Math.abs(focusAmount - focusAmountTarget) > .001 || focusPointer.distanceToSquared(focusPointerTarget) > .000001;
+      const orientationMoving = Math.abs(flag.rotation.y - (baseFlagRotationY + pointer.x * .08)) > .0001 || Math.abs(flag.rotation.x - (-.025 - pointer.y * .045)) > .0001;
+      backgroundUniforms.uBackgroundMotion.value = prefersReducedMotion ? 0 : usesPortraitCloth ? .62 : 1;
+      gpuTimer?.begin();
+      const gpuSubmissionStarted = __LOCAL_CONTROLS__ ? performance.now() : 0;
       backgroundRenderFrame += 1;
       if (
-        backgroundNeedsRender ||
-        backgroundRenderFrame % 2 === 0
+        backgroundNeedsRender || sceneDirty || pointerMoving || transitioning ||
+        (moving && !prefersReducedMotion && backgroundRenderFrame % 2 === 0)
       ) {
         renderer.setRenderTarget(backgroundRenderTarget);
         renderer.clear(true, true, true);
@@ -4435,28 +1889,22 @@ export function FlagStudio() {
         backgroundNeedsRender = false;
       }
 
-      shadowGroup.position.copy(flag.position);
-      shadowGroup.rotation.copy(flag.rotation);
-      shadowGroup.scale.copy(flag.scale);
-      renderer.setRenderTarget(shadowMaskTarget);
-      renderer.clear(true, true, true);
-      renderer.render(shadowScene, camera);
-      shadowBlurHorizontalMaterial.uniforms.uTexture.value =
-        shadowMaskTarget.texture;
-      renderer.setRenderTarget(shadowBlurHorizontalTarget);
-      renderer.clear(true, true, true);
-      renderer.render(shadowBlurHorizontalScene, backgroundCamera);
-      renderer.setRenderTarget(shadowBlurVerticalTarget);
-      renderer.clear(true, true, true);
-      renderer.render(shadowBlurVerticalScene, backgroundCamera);
-      shadowBlurHorizontalMaterial.uniforms.uTexture.value =
-        shadowBlurVerticalTarget.texture;
-      renderer.setRenderTarget(shadowBlurHorizontalTarget);
-      renderer.clear(true, true, true);
-      renderer.render(shadowBlurHorizontalScene, backgroundCamera);
-      renderer.setRenderTarget(shadowBlurVerticalTarget);
-      renderer.clear(true, true, true);
-      renderer.render(shadowBlurVerticalScene, backgroundCamera);
+      const shadowEnabled = uniforms.uShadowIntensity.value > .001;
+      if (shadowEnabled && (moving || sceneDirty || pointerMoving || orientationMoving || transitioning)) {
+        shadowGroup.position.copy(flag.position);
+        shadowGroup.rotation.copy(flag.rotation);
+        shadowGroup.scale.copy(flag.scale);
+        renderer.setRenderTarget(shadowMaskTarget);
+        renderer.clear(true, true, true);
+        renderer.render(shadowScene, camera);
+        shadowBlurHorizontalMaterial.uniforms.uTexture.value = shadowMaskTarget.texture;
+        renderer.setRenderTarget(shadowBlurHorizontalTarget);
+        renderer.clear(true, true, true);
+        renderer.render(shadowBlurHorizontalScene, backgroundCamera);
+        renderer.setRenderTarget(shadowBlurVerticalTarget);
+        renderer.clear(true, true, true);
+        renderer.render(shadowBlurVerticalScene, backgroundCamera);
+      }
 
       if (focusPipeline && focusAmount > 0.001) {
         renderer.setRenderTarget(focusPipeline.sceneRenderTarget);
@@ -4465,7 +1913,7 @@ export function FlagStudio() {
           backgroundCompositeScene,
           backgroundCamera,
         );
-        renderer.render(shadowCompositeScene, backgroundCamera);
+        if (shadowEnabled) renderer.render(shadowCompositeScene, backgroundCamera);
         renderer.clearDepth();
         renderer.render(scene, camera);
 
@@ -4492,16 +1940,37 @@ export function FlagStudio() {
           backgroundCompositeScene,
           backgroundCamera,
         );
-        renderer.render(shadowCompositeScene, backgroundCamera);
+        if (shadowEnabled) renderer.render(shadowCompositeScene, backgroundCamera);
         renderer.clearDepth();
         renderer.render(scene, camera);
       }
-      if (!hasRendered) {
-        hasRendered = true;
-        completeLoading();
+      gpuTimer?.end();
+      if (__LOCAL_CONTROLS__) {
+        renderSamples?.add(performance.now() - gpuSubmissionStarted);
+        canvas.dataset.physicsMs = clothSimulation.timings.total.toFixed(2);
+        canvas.dataset.activeParticles = String(clothSimulation.activeCount);
+        canvas.dataset.contacts = String(clothSimulation.contactTotal);
+        canvas.dataset.renderCount = String(backgroundRenderFrame);
+        canvas.dataset.frameCpuMs = (performance.now() - renderStarted).toFixed(2);
+      }
+      sceneDirty = false;
+      if (moving || transitioning || pointerMoving || focusMoving || orientationMoving) scheduleRender();
+      else {
+        lastTimestamp = null; clothSimulation.resetClock();
+        if (__LOCAL_CONTROLS__ && fpsRef.current) fpsRef.current.textContent = "En pausa";
+      }
+      // Reveal only after submitting a frame with the artwork, including a
+      // newer design selected while the initial image was still loading.
+      if (firstFramePending && (artworkReady || artworkImageRef.current)) {
+        firstFramePending = false;
+        setSceneRevealed(true);
+        setIsLoading(false);
       }
     };
 
+    scheduleRender = () => {
+      if (!disposed && !document.hidden && !animationFrame && !renderer.getContext().isContextLost()) animationFrame = window.requestAnimationFrame(render);
+    };
     resize();
     const resizeObserver = new ResizeObserver(resize);
     const canvasParent = canvas.parentElement;
@@ -4517,7 +1986,12 @@ export function FlagStudio() {
     canvas.addEventListener("pointerdown", handleCanvasPointerDown);
     canvas.addEventListener("pointerup", handleCanvasPointerUp);
     canvas.addEventListener("pointercancel", handleCanvasPointerCancel);
-    render();
+    canvas.addEventListener("lostpointercapture", handleCanvasPointerCancel);
+    canvas.addEventListener("webglcontextlost", handleContextLost);
+    canvas.addEventListener("webglcontextrestored", handleContextRestored);
+    window.addEventListener("blur", cancelGrab);
+    document.addEventListener("visibilitychange", handleVisibility);
+    scheduleRender();
 
     return () => {
       disposed = true;
@@ -4539,9 +2013,19 @@ export function FlagStudio() {
         "pointercancel",
         handleCanvasPointerCancel,
       );
+      canvas.removeEventListener("lostpointercapture", handleCanvasPointerCancel);
+      canvas.removeEventListener("webglcontextlost", handleContextLost);
+      canvas.removeEventListener("webglcontextrestored", handleContextRestored);
+      window.removeEventListener("blur", cancelGrab);
+      document.removeEventListener("visibilitychange", handleVisibility);
       clothSimulation.releaseGrab();
+      gpuTimer?.dispose();
+      invalidateSceneRef.current = () => undefined;
+      physicsMaterialRef.current = () => undefined;
+      cancelGrabRef.current = () => undefined;
       canvas.classList.remove("is-grab-ready", "is-grabbing");
       geometry.dispose();
+      surface.physical.dispose();
       intactClothEdge.geometry.dispose();
       tornClothEdge.geometry.dispose();
       frontMaterial.dispose();
@@ -4572,8 +2056,8 @@ export function FlagStudio() {
       artworkTexture.dispose();
       previousArtworkTexture.dispose();
       renderer.dispose();
-      timer.dispose();
       designLoadRef.current += 1;
+      if (uploadUrlRef.current) { URL.revokeObjectURL(uploadUrlRef.current); uploadUrlRef.current = null; }
       uniformsRef.current = null;
       textureRef.current = null;
       designTransitionRef.current = () => undefined;
@@ -4591,7 +2075,7 @@ export function FlagStudio() {
       simulationResetRef.current = () => undefined;
       resizeStageRef.current = () => undefined;
     };
-  }, [meshQuality, usesPortraitCloth]);
+  }, [meshQuality, usesPortraitCloth, rendererGeneration]);
 
   useEffect(() => {
     windRef.current = wind;
@@ -4606,12 +2090,10 @@ export function FlagStudio() {
   }, [wind]);
 
   useEffect(() => {
+    audioMountedRef.current = true;
     return () => {
-      const engine = windAudioRef.current;
-      if (!engine) return;
-      window.clearInterval(engine.updateTimer);
-      engine.source.stop();
-      void engine.context.close();
+      audioMountedRef.current = false;
+      windAudioRef.current?.dispose();
       windAudioRef.current = null;
     };
   }, []);
@@ -4639,6 +2121,7 @@ export function FlagStudio() {
   useEffect(() => {
     const uniforms = uniformsRef.current;
     if (!uniforms) return;
+    physicsMaterialRef.current(materialSettings.thickness, materialSettings.preset);
     uniforms.uFabricPreset.value = materialSettings.preset;
     uniforms.uTextureScale.value = materialSettings.scale;
     uniforms.uThickness.value = materialSettings.thickness;
@@ -4689,7 +2172,7 @@ export function FlagStudio() {
 
   useEffect(() => {
     tearModeUpdaterRef.current(tornMode);
-  }, [meshQuality, tornMode, usesPortraitCloth]);
+  }, [meshQuality, tornMode, usesPortraitCloth, rendererGeneration]);
 
   useEffect(() => {
     grabSettingsRef.current = grabSettings;
@@ -4699,6 +2182,31 @@ export function FlagStudio() {
   useEffect(() => {
     focusControlsRef.current = focusControls;
   }, [focusControls]);
+
+  useEffect(() => {
+    invalidateSceneRef.current();
+  }, [wind, flagSize, color, materialSettings, lighting, focusControls, backgroundSettings, artworkScale, activeDesign, premiereLightsEnabled, paused, tornMode, reducedMotion, controlsOpen]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => {
+      reducedMotionRef.current = media.matches;
+      setReducedMotion(media.matches);
+      if (media.matches) { pauseRef.current = true; setPaused(true); cancelGrabRef.current(); }
+      invalidateSceneRef.current();
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      void windAudioRef.current?.setRunning((windLayerEnabledRef.current || clothLayerEnabledRef.current) && !pauseRef.current && !document.hidden).catch(() => undefined);
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, [paused, windSoundEnabled, clothSoundEnabled]);
 
   const updateWind =
     (key: keyof WindControls) => (value: number) => {
@@ -4809,328 +2317,10 @@ export function FlagStudio() {
   };
 
   const togglePause = () => {
-    pauseRef.current = !paused;
-    setPaused(!paused);
-  };
-
-  const createWindAudio = () => {
-    const AudioContextConstructor =
-      window.AudioContext ||
-      (
-        window as typeof window & {
-          webkitAudioContext?: typeof AudioContext;
-        }
-      ).webkitAudioContext;
-    if (!AudioContextConstructor) return null;
-
-    const context = new AudioContextConstructor();
-    const bufferLength = Math.floor(context.sampleRate * 8);
-    const noiseBuffer = context.createBuffer(2, bufferLength, context.sampleRate);
-
-    for (let channel = 0; channel < noiseBuffer.numberOfChannels; channel += 1) {
-      const samples = noiseBuffer.getChannelData(channel);
-      let softenedNoise = 0;
-      for (let index = 0; index < samples.length; index += 1) {
-        const whiteNoise = Math.random() * 2 - 1;
-        softenedNoise = (softenedNoise + whiteNoise * 0.025) / 1.025;
-        samples[index] = softenedNoise * 3.2 + whiteNoise * 0.12;
-      }
-    }
-
-    const impactDuration = 0.12;
-    const impactBuffer = context.createBuffer(
-      2,
-      Math.floor(context.sampleRate * impactDuration),
-      context.sampleRate,
-    );
-    for (
-      let channel = 0;
-      channel < impactBuffer.numberOfChannels;
-      channel += 1
-    ) {
-      const samples = impactBuffer.getChannelData(channel);
-      for (let index = 0; index < samples.length; index += 1) {
-        const time = index / context.sampleRate;
-        const attack = Math.min(time * 900, 1);
-        const bodyEnvelope =
-          (Math.exp(-time * 82) * 0.86 + Math.exp(-time * 30) * 0.14) *
-          attack;
-        const snapEnvelope = Math.exp(-time * 115) * attack;
-        const clothNoise = Math.random() * 2 - 1;
-        const lowSnap = Math.sin(
-          Math.PI * 2 * (72 * time - 60 * time * time),
-        );
-        const subBody = Math.sin(Math.PI * 2 * 48 * time);
-        samples[index] =
-          lowSnap * bodyEnvelope * 0.78 +
-          subBody * bodyEnvelope * 0.18 +
-          clothNoise * snapEnvelope * 0.04;
-      }
-    }
-
-    const source = context.createBufferSource();
-    source.buffer = noiseBuffer;
-    source.loop = true;
-
-    const bodyFilter = context.createBiquadFilter();
-    bodyFilter.type = "lowpass";
-    bodyFilter.frequency.value = 620;
-    bodyFilter.Q.value = 0.45;
-
-    const detailFilter = context.createBiquadFilter();
-    detailFilter.type = "bandpass";
-    detailFilter.frequency.value = 1450;
-    detailFilter.Q.value = 0.75;
-
-    const gustFilter = context.createBiquadFilter();
-    gustFilter.type = "bandpass";
-    gustFilter.frequency.value = 780;
-    gustFilter.Q.value = 1.8;
-
-    const clothFilter = context.createBiquadFilter();
-    clothFilter.type = "highpass";
-    clothFilter.frequency.value = 2400;
-    clothFilter.Q.value = 0.55;
-
-    const bodyGain = context.createGain();
-    const detailGain = context.createGain();
-    const gustGain = context.createGain();
-    const clothGain = context.createGain();
-    const masterGain = context.createGain();
-    const panner = context.createStereoPanner();
-    const compressor = context.createDynamicsCompressor();
-    bodyGain.gain.value = 0;
-    detailGain.gain.value = 0;
-    gustGain.gain.value = 0;
-    clothGain.gain.value = 0;
-    masterGain.gain.value = 0;
-    compressor.threshold.value = -22;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 7;
-    compressor.attack.value = 0.012;
-    compressor.release.value = 0.24;
-
-    source.connect(bodyFilter).connect(bodyGain).connect(masterGain);
-    source.connect(detailFilter).connect(detailGain).connect(masterGain);
-    source.connect(gustFilter).connect(gustGain).connect(masterGain);
-    source.connect(clothFilter).connect(clothGain).connect(masterGain);
-    masterGain.connect(panner).connect(compressor).connect(context.destination);
-    source.start();
-
-    const engine: WindAudioEngine = {
-      context,
-      source,
-      bodyFilter,
-      detailFilter,
-      gustFilter,
-      clothFilter,
-      bodyGain,
-      detailGain,
-      gustGain,
-      clothGain,
-      masterGain,
-      panner,
-      impactBuffer,
-      lastImpactAt: Number.NEGATIVE_INFINITY,
-      nextImpactAt: context.currentTime + 0.22,
-      updateTimer: 0,
-      startedAt: performance.now() / 1000,
-    };
-
-    engine.updateTimer = window.setInterval(() => {
-      const now = context.currentTime;
-      const elapsed = performance.now() / 1000 - engine.startedAt;
-      const currentWind = windRef.current;
-      const strength = 1 - Math.exp(-Math.max(currentWind.strength, 0) / 4.5);
-      const speed = THREE.MathUtils.clamp(
-        Math.log2(1 + Math.max(currentWind.speed, 0)) / Math.log2(13),
-        0,
-        1,
-      );
-      const turbulence = THREE.MathUtils.clamp(
-        currentWind.turbulence / 8,
-        0,
-        1,
-      );
-      const gustiness = THREE.MathUtils.clamp(
-        currentWind.gustiness / 3,
-        0,
-        1,
-      );
-      const sound = windSoundRef.current;
-      const cloth = clothAudioRef.current;
-      const slowDrift =
-        Math.sin(elapsed * (0.19 + speed * 0.24) + 0.4) * 0.5 + 0.5;
-      const mediumDrift =
-        Math.sin(elapsed * (0.61 + speed * 0.83) + 2.1) * 0.5 + 0.5;
-      const fineDrift =
-        Math.sin(elapsed * (1.73 + turbulence * 2.1) + 1.2) * 0.5 + 0.5;
-      const irregularity = Math.random();
-      const gustActivity = THREE.MathUtils.clamp(
-        slowDrift * 0.28 +
-          mediumDrift * 0.29 +
-          fineDrift * 0.16 +
-          irregularity * 0.27,
-        0,
-        1,
-      );
-      const gustPulse = Math.pow(gustActivity, 2.35);
-      const gustWave =
-        (mediumDrift - 0.5) * 0.42 +
-        (fineDrift - 0.5) * 0.2 +
-        (irregularity - 0.5) * 0.18;
-      const gustEnvelope = THREE.MathUtils.clamp(
-        0.86 + gustiness * sound.gustDepth * gustWave,
-        0.52,
-        1.42,
-      );
-      const muted = pauseRef.current || document.hidden;
-      const audibleWind =
-        muted || !windLayerEnabledRef.current ? 0 : sound.volume;
-      const audibleCloth =
-        muted || !clothLayerEnabledRef.current ? 0 : sound.clothVolume;
-      const bodyLevel =
-        audibleWind *
-        sound.body *
-        strength *
-        (0.026 + speed * 0.052) *
-        gustEnvelope;
-      const detailLevel =
-        audibleWind *
-        sound.air *
-        strength *
-        (0.003 + turbulence * 0.04) *
-        (0.72 + gustiness * gustPulse * 0.55);
-      const gustLevel =
-        audibleWind *
-        sound.gustDepth *
-        strength *
-        gustiness *
-        (0.004 + turbulence * 0.024 + speed * 0.012) *
-        gustPulse;
-      const clothLevel =
-        audibleCloth *
-        sound.clothRustle *
-        cloth.motion *
-        (0.002 + turbulence * 0.013 + speed * 0.004);
-
-      bodyGain.gain.setTargetAtTime(bodyLevel, now, 0.09);
-      detailGain.gain.setTargetAtTime(detailLevel, now, 0.055);
-      gustGain.gain.setTargetAtTime(gustLevel, now, 0.075);
-      clothGain.gain.setTargetAtTime(clothLevel, now, 0.045);
-      bodyFilter.frequency.setTargetAtTime(
-        260 + speed * 720 + turbulence * 360,
-        now,
-        0.12,
-      );
-      bodyFilter.Q.setTargetAtTime(0.35 + turbulence * 0.55, now, 0.12);
-      detailFilter.frequency.setTargetAtTime(
-        850 + speed * 1550 + turbulence * 1150,
-        now,
-        0.085,
-      );
-      detailFilter.Q.setTargetAtTime(0.58 + gustiness * 0.7, now, 0.1);
-      gustFilter.frequency.setTargetAtTime(
-        430 +
-          speed * 860 +
-          turbulence * 380 +
-          (slowDrift - 0.5) * 310,
-        now,
-        0.11,
-      );
-      gustFilter.Q.setTargetAtTime(
-        1.1 + gustiness * 2.2 + gustPulse * 1.1,
-        now,
-        0.1,
-      );
-      clothFilter.frequency.setTargetAtTime(
-        1850 + cloth.motion * 2200 + turbulence * 1350,
-        now,
-        0.06,
-      );
-      clothFilter.Q.setTargetAtTime(
-        0.42 + cloth.motion * 0.55,
-        now,
-        0.08,
-      );
-
-      if (
-        audibleCloth > 0.001 &&
-        sound.clothImpact > 0.001 &&
-        now >= engine.nextImpactAt
-      ) {
-        const impactStrength = THREE.MathUtils.clamp(
-          (0.34 +
-            Math.random() * 0.48 +
-            cloth.impact * 0.1 +
-            cloth.motion * 0.08) *
-            sound.clothImpact *
-            audibleCloth,
-          0,
-          1,
-        );
-        const impactSource = context.createBufferSource();
-        const impactBodyFilter = context.createBiquadFilter();
-        const impactSnapFilter = context.createBiquadFilter();
-        const impactBodyGain = context.createGain();
-        const impactSnapGain = context.createGain();
-        const clothWeight = THREE.MathUtils.clamp(
-          sound.clothWeight,
-          0,
-          1,
-        );
-        impactSource.buffer = engine.impactBuffer;
-        impactSource.playbackRate.value = 0.86 + Math.random() * 0.24;
-        impactBodyFilter.type = "lowpass";
-        impactBodyFilter.frequency.value =
-          155 + (1 - clothWeight) * 230 + cloth.motion * 65;
-        impactBodyFilter.Q.value = 1.05 + clothWeight * 0.9;
-        impactSnapFilter.type = "bandpass";
-        impactSnapFilter.frequency.value =
-          720 + (1 - clothWeight) * 1150 + Math.random() * 320;
-        impactSnapFilter.Q.value = 0.9 + turbulence * 0.2;
-        impactBodyGain.gain.setValueAtTime(0.0001, now);
-        impactBodyGain.gain.linearRampToValueAtTime(
-          0.06 + impactStrength * 0.24,
-          now + 0.0025,
-        );
-        impactBodyGain.gain.exponentialRampToValueAtTime(
-          0.0001,
-          now + 0.075,
-        );
-        impactSnapGain.gain.setValueAtTime(0.0001, now);
-        impactSnapGain.gain.linearRampToValueAtTime(
-          0.0008 +
-            impactStrength * 0.006 * (1 - clothWeight * 0.55),
-          now + 0.0015,
-        );
-        impactSnapGain.gain.exponentialRampToValueAtTime(
-          0.0001,
-          now + 0.026,
-        );
-        impactSource
-          .connect(impactBodyFilter)
-          .connect(impactBodyGain)
-          .connect(masterGain);
-        impactSource
-          .connect(impactSnapFilter)
-          .connect(impactSnapGain)
-          .connect(masterGain);
-        impactSource.start(now);
-        impactSource.stop(now + 0.12);
-        engine.lastImpactAt = now;
-        engine.nextImpactAt = now + 0.24 + Math.random() * 0.38;
-      }
-      clothAudioRef.current.impact *= 0.22;
-      panner.pan.setTargetAtTime(
-        Math.sin(elapsed * 0.23 + mediumDrift) * gustiness * 0.12,
-        now,
-        0.18,
-      );
-    }, 50);
-
-    windAudioRef.current = engine;
-    return engine;
+    pauseRef.current = !pauseRef.current;
+    if (pauseRef.current) cancelGrabRef.current();
+    setPaused(pauseRef.current);
+    invalidateSceneRef.current();
   };
 
   const syncAudioLayers = async (
@@ -5138,23 +2328,20 @@ export function FlagStudio() {
     clothEnabled: boolean,
   ) => {
     const anyLayerEnabled = windEnabled || clothEnabled;
-    const engine =
-      windAudioRef.current ??
-      (anyLayerEnabled ? createWindAudio() : null);
-    if (anyLayerEnabled && !engine) return false;
-    if (engine) {
-      if (anyLayerEnabled && engine.context.state !== "running") {
-        await engine.context.resume();
+    try {
+      if (anyLayerEnabled && !windAudioRef.current) {
+        const { createWindAudio } = await import("./studio/audio");
+        if (!audioMountedRef.current) return false;
+        windAudioRef.current ??= createWindAudio({ windRef, windSoundRef, clothAudioRef, pauseRef, windLayerEnabledRef, clothLayerEnabledRef });
       }
-      const now = engine.context.currentTime;
-      engine.masterGain.gain.cancelScheduledValues(now);
-      engine.masterGain.gain.setTargetAtTime(
-        anyLayerEnabled ? 0.9 : 0,
-        now,
-        0.08,
-      );
+      const engine = windAudioRef.current;
+      if (!engine) return !anyLayerEnabled;
+      await engine.setRunning((windLayerEnabledRef.current || clothLayerEnabledRef.current) && !pauseRef.current && !document.hidden);
+      return true;
+    } catch {
+      setArtworkError("No se pudo activar el sonido. Podés reintentarlo desde Ajustes.");
+      return false;
     }
-    return true;
   };
 
   const toggleWindSound = async () => {
@@ -5417,7 +2604,20 @@ export function FlagStudio() {
     transitionOrigin: TransitionOrigin = DEFAULT_TRANSITION_ORIGIN,
   ) => {
     const sourceDesignId = activeDesignRef.current;
-    if (sourceDesignId === design.id) return;
+    const loadToken = ++designLoadRef.current;
+    if (uploadUrlRef.current) { URL.revokeObjectURL(uploadUrlRef.current); uploadUrlRef.current = null; }
+    setArtworkError(null); setRetryDesign(null);
+    // Selecting the current design is still a newer choice than a pending upload
+    // or preset request. Keep the loaded artwork and cancel that older request.
+    if (sourceDesignId === design.id && artworkImageRef.current) {
+      setIsLoading(false);
+      return;
+    }
+    if (webglError) {
+      activeDesignRef.current = design.id;
+      setActiveDesign(design.id); setColor(design.color); setArtworkName(design.label);
+      return;
+    }
 
     const designScale =
       designArtworkScalesRef.current[design.id] ?? INITIAL_ARTWORK_SCALE;
@@ -5436,7 +2636,6 @@ export function FlagStudio() {
     );
     const transitionDirection =
       sourceIndex < 0 || targetIndex >= sourceIndex ? 1 : -1;
-    const loadToken = ++designLoadRef.current;
     const cachedImage = designImageCache.get(design.asset);
     const image =
       cachedImage?.complete && cachedImage.naturalWidth === 0
@@ -5475,7 +2674,9 @@ export function FlagStudio() {
       window.requestAnimationFrame(() => setIsLoading(false));
     };
     image.onerror = () => {
-      if (designLoadRef.current === loadToken) setIsLoading(false);
+      if (designLoadRef.current === loadToken) {
+        setIsLoading(false); setArtworkError("No se pudo cargar el diseño. Podés reintentarlo."); setRetryDesign(design.id);
+      }
     };
     if (image.complete && image.naturalWidth > 0) {
       image.onload?.(new Event("load"));
@@ -5663,72 +2864,55 @@ export function FlagStudio() {
     );
     setMoodEditorOpen(false);
     setMoodNameDraft("");
-    pauseRef.current = false;
+    pauseRef.current = reducedMotionRef.current;
     clothAudioRef.current = { motion: 0, impact: 0 };
-    setPaused(false);
+    setPaused(reducedMotionRef.current);
     simulationResetRef.current();
     applyDesign(selectedDesign);
   };
 
   const handleArtwork = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    const artworkCanvas = artworkCanvasRef.current;
-    const texture = textureRef.current;
-    if (!file || !artworkCanvas || !texture) return;
-    if (
-      !ALLOWED_ARTWORK_TYPES.has(file.type) ||
-      file.size > MAX_ARTWORK_FILE_SIZE
-    ) {
-      setArtworkName("Usá PNG o WebP de hasta 10 MB");
-      event.target.value = "";
-      return;
+    event.target.value = "";
+    if (!file) return;
+    const loadToken = ++designLoadRef.current;
+    setRetryDesign(null); setArtworkError(null);
+    if (uploadUrlRef.current) URL.revokeObjectURL(uploadUrlRef.current);
+    uploadUrlRef.current = null;
+    if (!ALLOWED_ARTWORK_TYPES.has(file.type) || file.size > MAX_ARTWORK_FILE_SIZE) {
+      setIsLoading(false); setArtworkError("Usá una imagen PNG o WebP de hasta 10 MB."); return;
     }
-
-    const image = new Image();
     const fileUrl = URL.createObjectURL(file);
+    uploadUrlRef.current = fileUrl;
     setIsLoading(true);
-    image.onload = () => {
-      if (
-        image.naturalWidth > MAX_ARTWORK_DIMENSION ||
-        image.naturalHeight > MAX_ARTWORK_DIMENSION
-      ) {
+    const image = new Image();
+    image.onload = async () => {
+      try {
+        if (loadToken !== designLoadRef.current) return;
+        if (image.naturalWidth > MAX_ARTWORK_DIMENSION || image.naturalHeight > MAX_ARTWORK_DIMENSION) throw new Error("La imagen supera los 8192 px. Elegí una versión más pequeña.");
+        const reduced = await resizeArtwork(image);
+        if (loadToken !== designLoadRef.current) return;
+        artworkImageRef.current = reduced;
+        setPreviousDesign(activeDesignRef.current);
+        if (previousDesignTimerRef.current !== null) window.clearTimeout(previousDesignTimerRef.current);
+        previousDesignTimerRef.current = window.setTimeout(() => { setPreviousDesign(null); previousDesignTimerRef.current = null; }, 880);
+        designTransitionRef.current(reduced, color, artworkScaleRef.current, 1, DEFAULT_TRANSITION_ORIGIN);
+        setArtworkName(file.name); activeDesignRef.current = null; setActiveDesign(null);
+        invalidateSceneRef.current();
+      } catch (error) {
+        if (loadToken === designLoadRef.current) setArtworkError(error instanceof Error ? error.message : "No se pudo preparar la imagen.");
+      } finally {
         URL.revokeObjectURL(fileUrl);
-        setArtworkName("La imagen supera 8192 px");
-        setIsLoading(false);
-        return;
+        if (uploadUrlRef.current === fileUrl) uploadUrlRef.current = null;
+        if (loadToken === designLoadRef.current) setIsLoading(false);
       }
-      designLoadRef.current += 1;
-      artworkImageRef.current = image;
-      const sourceDesignId = activeDesignRef.current;
-      if (sourceDesignId) {
-        setPreviousDesign(sourceDesignId);
-      }
-      if (previousDesignTimerRef.current !== null) {
-        window.clearTimeout(previousDesignTimerRef.current);
-      }
-      previousDesignTimerRef.current = window.setTimeout(() => {
-        setPreviousDesign(null);
-        previousDesignTimerRef.current = null;
-      }, 880);
-      designTransitionRef.current(
-        image,
-        color,
-        artworkScaleRef.current,
-        1,
-        DEFAULT_TRANSITION_ORIGIN,
-      );
-      setArtworkName(file.name);
-      activeDesignRef.current = null;
-      setActiveDesign(null);
-      URL.revokeObjectURL(fileUrl);
-      window.requestAnimationFrame(() => setIsLoading(false));
     };
     image.onerror = () => {
       URL.revokeObjectURL(fileUrl);
-      setIsLoading(false);
+      if (uploadUrlRef.current === fileUrl) uploadUrlRef.current = null;
+      if (loadToken === designLoadRef.current) { setIsLoading(false); setArtworkError("No se pudo leer la imagen. Probá con otro PNG o WebP."); }
     };
     image.src = fileUrl;
-    event.target.value = "";
   };
 
   return (
@@ -5776,9 +2960,8 @@ export function FlagStudio() {
                   onClick={(event) => {
                     if (design.id === activeDesignRef.current) {
                       animateSelectedIdentityTap(event.timeStamp);
-                    } else {
-                      applyDesign(design);
                     }
+                    applyDesign(design);
                   }}
                   aria-label={design.label}
                   aria-pressed={isActive}
@@ -5820,1168 +3003,115 @@ export function FlagStudio() {
         className={`stage stage-${activeDesign ?? "custom"}`}
         aria-label="Abad * Human"
       >
-        {(isLoading || loadingPreview) && (
-          <div
-            className="stage-loader"
-            role="status"
-            aria-live="polite"
-            style={
-              {
-                "--loader-color": color,
-              } as React.CSSProperties
-            }
-          >
-            <span className="loader-pulse" aria-hidden="true" />
-            <span className="sr-only">Preparando la tela</span>
+        <div
+          className={`stage-loader${isLoading || loadingPreview ? "" : " is-hidden"}`}
+          role="status"
+          aria-live="polite"
+          aria-label="Cargando bandera"
+          aria-hidden={!isLoading && !loadingPreview}
+          style={
+            {
+              "--loader-color": color,
+            } as React.CSSProperties
+          }
+        >
+          <span className="loader-pulse" aria-hidden="true" />
+        </div>
+        {webglError && (
+          <div className="static-scene" role="status">
+            <div className="static-flag" style={{ background: color }}>
+              <img src={DESIGN_PRESETS.find((design) => design.id === activeDesign)?.asset ?? INITIAL_DESIGN.asset} alt={`Bandera ${artworkName}`} />
+            </div>
+            <p>{webglError}</p>
+            <button type="button" onClick={() => setRendererGeneration((value) => value + 1)}>Reintentar vista 3D</button>
           </div>
         )}
         <canvas
+          hidden={!!webglError}
           ref={canvasRef}
-          className="flag-canvas"
+          className={`flag-canvas${sceneRevealed ? " is-revealed" : ""}`}
           aria-label="Lienzo tridimensional interactivo"
         />
       </section>
 
-      <aside
-        id="flag-controls"
-        className="controls"
-        aria-label="Controles de la bandera"
-        aria-keyshortcuts="Meta+K Control+K"
-        hidden={!controlsOpen}
-      >
-        <div className="panel-heading">
-          <span className="iddqd-mode">IDDQD MODE</span>
-          <div className="panel-actions">
-            <button className="icon-button" type="button" onClick={reset}>
-              Reiniciar
-            </button>
-          </div>
+      {artworkError && <div className="scene-message" role="alert">
+        <span>{artworkError}</span>
+        {retryDesign && <button type="button" onClick={() => {
+          const design = DESIGN_PRESETS.find((entry) => entry.id === retryDesign);
+          if (design) { designImageCache.delete(design.asset); activeDesignRef.current = null; applyDesign(design); }
+        }}>Reintentar</button>}
+        <button type="button" aria-label="Cerrar mensaje" onClick={() => setArtworkError(null)}>×</button>
+      </div>}
+      {__LOCAL_CONTROLS__ && (
+        <div className="scene-actions" aria-label="Opciones de la escena">
+          <button ref={settingsButtonRef} type="button" aria-expanded={controlsOpen} aria-controls="flag-controls" onClick={() => setControlsOpen((open) => !open)}>Ajustes</button>
         </div>
+      )}
 
-        <section
-          className={`mood-sidebar ${moodEditorOpen ? "is-editing" : ""}`}
-          aria-label="Moods de escena"
-        >
-          <div className="mood-sidebar-bar">
-            <span className="mood-sidebar-label">MOODS</span>
-            <div className="mood-options" role="group" aria-label="Moods">
-              {allMoods.map((mood) => (
-                <div
-                  className={`mood-option ${
-                    mood.custom ? "is-custom" : ""
-                  }`}
-                  key={mood.id}
-                >
-                  <button
-                    className={`mood-button ${
-                      activeMoodId === mood.id ? "is-active" : ""
-                    }`}
-                    type="button"
-                    aria-pressed={activeMoodId === mood.id}
-                    onClick={() => applyMood(mood)}
-                    style={
-                      {
-                        "--mood-accent": mood.accent,
-                      } as React.CSSProperties
-                    }
-                  >
-                    <span className="mood-dot" aria-hidden="true" />
-                    <span>{mood.name}</span>
-                  </button>
-                  {mood.custom && (
-                    <button
-                      className="mood-delete"
-                      type="button"
-                      aria-label={`Eliminar mood ${mood.name}`}
-                      onClick={() => removeCustomMood(mood.id)}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button
-              className="mood-create"
-              type="button"
-              aria-label="Guardar mood actual"
-              aria-expanded={moodEditorOpen}
-              onClick={() => {
-                setMoodEditorOpen((current) => !current);
-                setMoodNameDraft("");
-              }}
-            >
-              <span aria-hidden="true">+</span>
-            </button>
-          </div>
-
-          {moodEditorOpen && (
-            <form className="mood-editor" onSubmit={saveCurrentMood}>
-              <input
-                type="text"
-                value={moodNameDraft}
-                maxLength={18}
-                autoFocus
-                aria-label="Nombre del nuevo mood"
-                placeholder="Nombre del mood"
-                onChange={(event) => setMoodNameDraft(event.target.value)}
-              />
-              <button
-                className="mood-save"
-                type="submit"
-                disabled={!moodNameDraft.trim()}
-              >
-                Guardar
-              </button>
-              <button
-                className="mood-cancel"
-                type="button"
-                onClick={() => {
-                  setMoodEditorOpen(false);
-                  setMoodNameDraft("");
-                }}
-              >
-                Cancelar
-              </button>
-            </form>
-          )}
-        </section>
-
-        <div
-          className="control-tabs"
-          role="tablist"
-          aria-label="Grupos de controles"
-        >
-          <button
-            id="motion-tab"
-            type="button"
-            role="tab"
-            aria-label="Movimiento"
-            aria-selected={activeControlTab === "motion"}
-            aria-controls="motion-panel"
-            data-tooltip="Movimiento"
-            className={activeControlTab === "motion" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("motion")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">≈</span>
-            <span className="sr-only">Movimiento</span>
-          </button>
-          <button
-            id="sound-tab"
-            type="button"
-            role="tab"
-            aria-label="Sonido"
-            aria-selected={activeControlTab === "sound"}
-            aria-controls="sound-panel"
-            data-tooltip="Sonido"
-            className={activeControlTab === "sound" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("sound")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">♪</span>
-            <span className="sr-only">Sonido</span>
-          </button>
-          <button
-            id="grab-tab"
-            type="button"
-            role="tab"
-            aria-label="Agarre"
-            aria-selected={activeControlTab === "grab"}
-            aria-controls="grab-panel"
-            data-tooltip="Agarre"
-            className={activeControlTab === "grab" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("grab")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">✥</span>
-            <span className="sr-only">Agarre</span>
-          </button>
-          <button
-            id="material-tab"
-            type="button"
-            role="tab"
-            aria-label="Material"
-            aria-selected={activeControlTab === "material"}
-            aria-controls="material-panel"
-            data-tooltip="Material"
-            className={activeControlTab === "material" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("material")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">◇</span>
-            <span className="sr-only">Material</span>
-          </button>
-          <button
-            id="lighting-tab"
-            type="button"
-            role="tab"
-            aria-label="Luz"
-            aria-selected={activeControlTab === "lighting"}
-            aria-controls="lighting-panel"
-            data-tooltip="Luz"
-            className={activeControlTab === "lighting" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("lighting")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">☼</span>
-            <span className="sr-only">Luz</span>
-          </button>
-          <button
-            id="background-tab"
-            type="button"
-            role="tab"
-            aria-label="Fondo"
-            aria-selected={activeControlTab === "background"}
-            aria-controls="background-panel"
-            data-tooltip="Fondo"
-            className={
-              activeControlTab === "background" ? "is-active" : ""
-            }
-            onClick={() => setActiveControlTab("background")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">◌</span>
-            <span className="sr-only">Fondo</span>
-          </button>
-          <button
-            id="artwork-tab"
-            type="button"
-            role="tab"
-            aria-label="Gráfica"
-            aria-selected={activeControlTab === "artwork"}
-            aria-controls="artwork-panel"
-            data-tooltip="Gráfica"
-            className={activeControlTab === "artwork" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("artwork")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">▦</span>
-            <span className="sr-only">Gráfica</span>
-          </button>
-          <button
-            id="focus-tab"
-            type="button"
-            role="tab"
-            aria-label="Foco"
-            aria-selected={activeControlTab === "focus"}
-            aria-controls="focus-panel"
-            data-tooltip="Foco"
-            className={activeControlTab === "focus" ? "is-active" : ""}
-            onClick={() => setActiveControlTab("focus")}
-          >
-            <span className="control-tab-icon" aria-hidden="true">◎</span>
-            <span className="sr-only">Foco</span>
-          </button>
-        </div>
-
-        <div
-          id="motion-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="motion-tab"
-          hidden={activeControlTab !== "motion"}
-        >
-          <Control
-            label="Tamaño de bandera"
-            value={flagSize}
-            min={0.42}
-            max={1.2}
-            step={0.01}
-            display={`${Math.round(flagSize * 100)}%`}
-            onChange={setFlagSize}
-          />
-          <Control
-            label="Intensidad"
-            value={wind.strength}
-            min={0}
-            max={12}
-            manualMax={100}
-            step={0.01}
-            display={`${wind.strength.toFixed(2)}×`}
-            onChange={updateWind("strength")}
-          />
-          <Control
-            label="Turbulencia"
-            value={wind.turbulence}
-            min={0}
-            max={8}
-            step={0.01}
-            display={`${Math.round((wind.turbulence / 8) * 100)}%`}
-            onChange={updateWind("turbulence")}
-          />
-          <Control
-            label="Variación / ráfagas"
-            value={wind.gustiness}
-            min={0}
-            max={3}
-            step={0.01}
-            display={`${Math.round((wind.gustiness / 3) * 100)}%`}
-            onChange={updateWind("gustiness")}
-          />
-          <Control
-            label="Dirección vertical"
-            value={wind.direction}
-            min={-1}
-            max={1}
-            step={0.01}
-            display={wind.direction > 0.05 ? "↗" : wind.direction < -0.05 ? "↘" : "→"}
-            onChange={updateWind("direction")}
-          />
-          <Control
-            label="Velocidad"
-            value={wind.speed}
-            min={0.15}
-            max={12}
-            manualMax={300}
-            step={0.01}
-            display={`${wind.speed.toFixed(1)}×`}
-            onChange={updateWind("speed")}
-          />
-          <Control
-            label="Gravedad"
-            value={wind.gravity}
-            min={0}
-            max={1.6}
-            step={0.01}
-            display={`${Math.round((wind.gravity / 1.6) * 100)}%`}
-            onChange={updateWind("gravity")}
-          />
-        </div>
-
-        <div
-          id="grab-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="grab-tab"
-          hidden={activeControlTab !== "grab"}
-        >
-          <p className="grab-control-hint">
-            Ajustá cuánto esfuerzo requiere tomar y deformar la tela.
-          </p>
-          <Control
-            label="Resistencia"
-            value={grabSettings.resistance}
-            min={0}
-            max={1}
-            step={0.01}
-            display={`${Math.round(grabSettings.resistance * 100)}%`}
-            onChange={updateGrab("resistance")}
-          />
-          <Control
-            label="Área afectada"
-            value={grabSettings.radius}
-            min={0.06}
-            max={0.24}
-            step={0.005}
-            display={`${Math.round(
-              (grabSettings.radius / 0.24) * 100,
-            )}%`}
-            onChange={updateGrab("radius")}
-          />
-          <Control
-            label="Umbral de arrastre"
-            value={grabSettings.activationDistance}
-            min={2}
-            max={30}
-            step={1}
-            display={`${Math.round(
-              grabSettings.activationDistance,
-            )} px`}
-            onChange={updateGrab("activationDistance")}
-          />
-          <Control
-            label="Inercia al soltar"
-            value={grabSettings.inertia}
-            min={0}
-            max={1}
-            step={0.01}
-            display={`${Math.round(grabSettings.inertia * 100)}%`}
-            onChange={updateGrab("inertia")}
-          />
-        </div>
-
-        <div
-          id="sound-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="sound-tab"
-          hidden={activeControlTab !== "sound"}
-        >
-          <div className="sound-layer-section">
-            <div className="toggle-control ambient-audio-control">
-              <div>
-                <span>Ambiente</span>
-                <small>
-                  Cuerpo, aire y ráfagas que acompañan el movimiento
-                </small>
-              </div>
-              <button
-                className={`toggle-switch ${
-                  windSoundEnabled ? "is-active" : ""
-                }`}
-                type="button"
-                role="switch"
-                aria-checked={windSoundEnabled}
-                onClick={() => void toggleWindSound()}
-              >
-                <span aria-hidden="true" />
-                <span className="sr-only">
-                  {windSoundEnabled
-                    ? "Desactivar ambiente"
-                    : "Activar ambiente"}
-                </span>
-              </button>
-            </div>
-            <Control
-              label="Volumen del ambiente"
-              value={windSound.volume}
-              min={0}
-              max={1}
-              step={0.01}
-              display={`${Math.round(windSound.volume * 100)}%`}
-              onChange={(value) => updateWindSound("volume", value)}
-            />
-            <Control
-              label="Cuerpo / graves"
-              value={windSound.body}
-              min={0}
-              max={1.5}
-              step={0.01}
-              display={`${Math.round(windSound.body * 100)}%`}
-              onChange={(value) => updateWindSound("body", value)}
-            />
-            <Control
-              label="Aire / detalle"
-              value={windSound.air}
-              min={0}
-              max={1.5}
-              step={0.01}
-              display={`${Math.round(windSound.air * 100)}%`}
-              onChange={(value) => updateWindSound("air", value)}
-            />
-            <Control
-              label="Profundidad de ráfagas"
-              value={windSound.gustDepth}
-              min={0}
-              max={1.5}
-              step={0.01}
-              display={`${Math.round(windSound.gustDepth * 100)}%`}
-              onChange={(value) => updateWindSound("gustDepth", value)}
-            />
-          </div>
-
-          <div className="sound-layer-section">
-            <div className="toggle-control ambient-audio-control">
-              <div>
-                <span>Tela y golpes</span>
-                <small>
-                  Flaps graves con cadencia libre para calibrar primero el timbre
-                </small>
-              </div>
-              <button
-                className={`toggle-switch ${
-                  clothSoundEnabled ? "is-active" : ""
-                }`}
-                type="button"
-                role="switch"
-                aria-checked={clothSoundEnabled}
-                onClick={() => void toggleClothSound()}
-              >
-                <span aria-hidden="true" />
-                <span className="sr-only">
-                  {clothSoundEnabled
-                    ? "Desactivar sonido de tela"
-                    : "Activar sonido de tela"}
-                </span>
-              </button>
-            </div>
-            <Control
-              label="Volumen de tela"
-              value={windSound.clothVolume}
-              min={0}
-              max={1}
-              step={0.01}
-              display={`${Math.round(windSound.clothVolume * 100)}%`}
-              onChange={(value) =>
-                updateWindSound("clothVolume", value)
-              }
-            />
-            <Control
-              label="Roce / detalle"
-              value={windSound.clothRustle}
-              min={0}
-              max={1.5}
-              step={0.01}
-              display={`${Math.round(windSound.clothRustle * 100)}%`}
-              onChange={(value) =>
-                updateWindSound("clothRustle", value)
-              }
-            />
-            <Control
-              label="Intensidad de golpes"
-              value={windSound.clothImpact}
-              min={0}
-              max={2}
-              step={0.01}
-              display={`${Math.round(windSound.clothImpact * 100)}%`}
-              onChange={(value) =>
-                updateWindSound("clothImpact", value)
-              }
-            />
-            <Control
-              label="Gravedad del golpe"
-              value={windSound.clothWeight}
-              min={0}
-              max={1}
-              step={0.01}
-              display={`${Math.round(windSound.clothWeight * 100)}%`}
-              onChange={(value) =>
-                updateWindSound("clothWeight", value)
-              }
-            />
-          </div>
-        </div>
-
-        <div
-          id="material-panel"
-          className="control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="material-tab"
-          hidden={activeControlTab !== "material"}
-        >
-          <div className="mesh-quality-control">
-            <div className="section-label">
-              <span>Calidad / subdivisión</span>
-              <span className="color-code">{meshQuality}×</span>
-            </div>
-            <div
-              className="mesh-quality-options"
-              role="group"
-              aria-label="Calidad de subdivisión de la tela"
-            >
-              {([1, 2, 3, 4] as MeshQuality[]).map((quality) => (
-                <button
-                  key={quality}
-                  className={meshQuality === quality ? "is-active" : ""}
-                  type="button"
-                  aria-pressed={meshQuality === quality}
-                  onClick={() => setMeshQuality(quality)}
-                >
-                  {quality}×
-                </button>
-              ))}
-            </div>
-            <small>
-              Más subdivisión suaviza pliegues y rasgaduras, pero exige más
-              procesamiento.
-            </small>
-          </div>
-
-          <div className="toggle-control">
-            <div>
-              <span>Tela rasgada</span>
-              <small>Agujeros y cortes físicos en la malla</small>
-            </div>
-            <button
-              className={`toggle-switch ${tornMode ? "is-active" : ""}`}
-              type="button"
-              role="switch"
-              aria-checked={tornMode}
-              onClick={() => setTornMode((current) => !current)}
-            >
-              <span aria-hidden="true" />
-              <span className="sr-only">
-                {tornMode
-                  ? "Desactivar tela rasgada"
-                  : "Activar tela rasgada"}
-              </span>
-            </button>
-          </div>
-
-          <div className="material-section">
-            <div className="section-label">
-              <span>Color de tela</span>
-              <span className="color-code">{color.toUpperCase()}</span>
-            </div>
-            <div className="swatches">
-              {FLAG_COLORS.map((swatch) => (
-                <button
-                  key={swatch}
-                  className={`swatch ${color === swatch ? "is-active" : ""}`}
-                  type="button"
-                  style={{ "--swatch": swatch } as React.CSSProperties}
-                  onClick={() => setColor(swatch)}
-                  aria-label={`Cambiar color a ${swatch}`}
-                  aria-pressed={color === swatch}
-                />
-              ))}
-              <label className="custom-color">
-                <span aria-hidden="true">+</span>
-                <span className="sr-only">Elegir otro color</span>
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(event) => setColor(event.target.value)}
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="texture-section">
-            <div className="section-label">
-              <span>Textura de tela</span>
-              <span className="color-code">PROCEDURAL</span>
-            </div>
-            <div className="texture-options">
-              {FABRIC_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={`texture-option ${
-                    materialSettings.preset === preset.id ? "is-active" : ""
-                  }`}
-                  type="button"
-                  onClick={() =>
-                    setMaterialSettings((current) => ({
-                      ...current,
-                      preset: preset.id,
-                    }))
-                  }
-                  aria-pressed={materialSettings.preset === preset.id}
-                >
-                  <span>{preset.label}</span>
-                  <small>{preset.detail}</small>
-                </button>
-              ))}
-            </div>
-            <div className="material-controls">
-              <Control
-                label="Espesor visual"
-                value={materialSettings.thickness}
-                min={0.004}
-                max={0.08}
-                step={0.001}
-                display={`${Math.round((materialSettings.thickness / 0.08) * 100)}%`}
-                onChange={updateMaterial("thickness")}
-              />
-              <Control
-                label="Escala de trama"
-                value={materialSettings.scale}
-                min={0.35}
-                max={10}
-                step={0.01}
-                display={`${materialSettings.scale.toFixed(2)}×`}
-                onChange={updateMaterial("scale")}
-              />
-              <Control
-                label="Intensidad normal"
-                value={materialSettings.normalStrength}
-                min={0}
-                max={2.5}
-                step={0.01}
-                display={`${Math.round((materialSettings.normalStrength / 2.5) * 100)}%`}
-                onChange={updateMaterial("normalStrength")}
-              />
-              <Control
-                label="Relieve / bump"
-                value={materialSettings.bumpStrength}
-                min={0}
-                max={1.5}
-                step={0.01}
-                display={`${Math.round((materialSettings.bumpStrength / 1.5) * 100)}%`}
-                onChange={updateMaterial("bumpStrength")}
-              />
-              <Control
-                label="Rugosidad"
-                value={materialSettings.roughness}
-                min={0.05}
-                max={1}
-                step={0.01}
-                display={`${Math.round(materialSettings.roughness * 100)}%`}
-                onChange={updateMaterial("roughness")}
-              />
-              <Control
-                label="Brillo de fibra"
-                value={materialSettings.sheenIntensity}
-                min={0}
-                max={1.5}
-                step={0.01}
-                display={`${Math.round((materialSettings.sheenIntensity / 1.5) * 100)}%`}
-                onChange={updateMaterial("sheenIntensity")}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div
-          id="lighting-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="lighting-tab"
-          hidden={activeControlTab !== "lighting"}
-        >
-          <div
-            className={`premiere-control-section ${
-              activeDesign === "popcorn" ? "is-available" : ""
-            }`}
-          >
-            <div className="premiere-control-heading">
-              <div>
-                <span>Reflectores de estreno</span>
-                <small>
-                  {activeDesign === "popcorn"
-                    ? "Haces animados que cruzan y alumbran la tela"
-                    : "Preset exclusivo del diseño Popcorn"}
-                </small>
-              </div>
-              {activeDesign === "popcorn" && (
-                <button
-                  className={`toggle-switch premiere-toggle ${
-                    premiereLightsEnabled ? "is-active" : ""
-                  }`}
-                  type="button"
-                  role="switch"
-                  aria-checked={premiereLightsEnabled}
-                  onClick={() =>
-                    setPremiereLightsEnabled((current) => !current)
-                  }
-                >
-                  <span aria-hidden="true" />
-                  <span className="sr-only">
-                    {premiereLightsEnabled
-                      ? "Desactivar reflectores de estreno"
-                      : "Activar reflectores de estreno"}
-                  </span>
-                </button>
-              )}
-            </div>
-            {activeDesign === "popcorn" && premiereLightsEnabled && (
-              <div className="premiere-controls">
-                <Control
-                  label="Intensidad de reflectores"
-                  value={lighting.premiereIntensity}
-                  min={0}
-                  max={3}
-                  step={0.01}
-                  display={`${lighting.premiereIntensity.toFixed(2)}×`}
-                  onChange={updateLighting("premiereIntensity")}
-                />
-                <Control
-                  label="Velocidad de barrido"
-                  value={lighting.premiereSpeed}
-                  min={0.1}
-                  max={3}
-                  step={0.01}
-                  display={`${lighting.premiereSpeed.toFixed(2)}×`}
-                  onChange={updateLighting("premiereSpeed")}
-                />
-              </div>
-            )}
-          </div>
-          <Control
-            label="Luz ambiente"
-            value={lighting.ambient}
-            min={0}
-            max={1.5}
-            step={0.01}
-            display={`${Math.round((lighting.ambient / 1.5) * 100)}%`}
-            onChange={updateLighting("ambient")}
-          />
-          <Control
-            label="Intensidad principal"
-            value={lighting.keyIntensity}
-            min={0}
-            max={3}
-            step={0.01}
-            display={`${lighting.keyIntensity.toFixed(2)}×`}
-            onChange={updateLighting("keyIntensity")}
-          />
-          <Control
-            label="Luz de relleno"
-            value={lighting.fillIntensity}
-            min={0}
-            max={1}
-            step={0.01}
-            display={`${Math.round(lighting.fillIntensity * 100)}%`}
-            onChange={updateLighting("fillIntensity")}
-          />
-          <Control
-            label="Posición horizontal"
-            value={lighting.horizontal}
-            min={-1.5}
-            max={1.5}
-            step={0.01}
-            display={lighting.horizontal.toFixed(2)}
-            onChange={updateLighting("horizontal")}
-          />
-          <Control
-            label="Altura"
-            value={lighting.vertical}
-            min={-1.5}
-            max={1.5}
-            step={0.01}
-            display={lighting.vertical.toFixed(2)}
-            onChange={updateLighting("vertical")}
-          />
-          <Control
-            label="Profundidad"
-            value={lighting.depth}
-            min={0.1}
-            max={2.5}
-            step={0.01}
-            display={lighting.depth.toFixed(2)}
-            onChange={updateLighting("depth")}
-          />
-          <Control
-            label="Luz de borde"
-            value={lighting.rimIntensity}
-            min={0}
-            max={1.5}
-            step={0.01}
-            display={`${Math.round((lighting.rimIntensity / 1.5) * 100)}%`}
-            onChange={updateLighting("rimIntensity")}
-          />
-          <Control
-            label="Sombra de tela"
-            value={lighting.shadowIntensity}
-            min={0}
-            max={1}
-            step={0.01}
-            display={`${Math.round(lighting.shadowIntensity * 100)}%`}
-            onChange={updateLighting("shadowIntensity")}
-          />
-          <div className="light-color-control">
-            <div>
-              <span>Color de luz</span>
-              <small>Fría, neutra o cálida</small>
-            </div>
-            <label
-              className="light-color-picker"
-              style={
-                {
-                  "--light-color": lighting.color,
-                } as React.CSSProperties
-              }
-            >
-              <span>{lighting.color.toUpperCase()}</span>
-              <input
-                type="color"
-                value={lighting.color}
-                aria-label="Color de luz"
-                onChange={(event) =>
-                  setLighting((current) => ({
-                    ...current,
-                    color: event.target.value,
-                  }))
-                }
-              />
-            </label>
-          </div>
-        </div>
-
-        <div
-          id="background-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="background-tab"
-          hidden={activeControlTab !== "background"}
-        >
-          <p className="grab-control-hint">
-            Ajustes del mesh procedural para el diseño activo. Cada
-            diseño conserva sus propios valores durante la sesión.
-          </p>
-          <Control
-            label="Intensidad"
-            value={backgroundSettings.intensity}
-            min={0.03}
-            max={0.1}
-            step={0.01}
-            display={`${Math.round(
-              backgroundSettings.intensity * 100,
-            )}%`}
-            onChange={(value) =>
-              updateBackground("intensity", value)
-            }
-          />
-          <Control
-            label="Velocidad"
-            value={backgroundSettings.speed}
-            min={0}
-            max={1.5}
-            step={0.01}
-            display={`${backgroundSettings.speed.toFixed(2)}×`}
-            onChange={(value) => updateBackground("speed", value)}
-          />
-          <Control
-            label="Deformación"
-            value={backgroundSettings.warp}
-            min={0}
-            max={0.6}
-            step={0.01}
-            display={`${backgroundSettings.warp.toFixed(2)}×`}
-            onChange={(value) => updateBackground("warp", value)}
-          />
-        </div>
-
-        <div
-          id="focus-panel"
-          className="control-group control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="focus-tab"
-          hidden={activeControlTab !== "focus"}
-        >
-          <div className="toggle-control focus-toggle-control">
-            <div>
-              <span>Foco bajo el mouse</span>
-              <small>
-                Conserva nítida el área del puntero y desenfoca el resto
-              </small>
-            </div>
-            <button
-              className={`toggle-switch ${
-                focusControls.enabled ? "is-active" : ""
-              }`}
-              type="button"
-              role="switch"
-              aria-checked={focusControls.enabled}
-              onClick={() =>
-                setFocusControls((current) => ({
-                  ...current,
-                  enabled: !current.enabled,
-                }))
-              }
-            >
-              <span aria-hidden="true" />
-              <span className="sr-only">
-                {focusControls.enabled
-                  ? "Desactivar foco bajo el mouse"
-                  : "Activar foco bajo el mouse"}
-              </span>
-            </button>
-          </div>
-          <Control
-            label="Radio nítido"
-            value={focusControls.radius}
-            min={50}
-            max={280}
-            step={1}
-            display={`${Math.round(focusControls.radius)} px`}
-            onChange={updateFocus("radius")}
-          />
-          <Control
-            label="Suavidad del borde"
-            value={focusControls.feather}
-            min={8}
-            max={180}
-            step={1}
-            display={`${Math.round(focusControls.feather)} px`}
-            onChange={updateFocus("feather")}
-          />
-          <Control
-            label="Intensidad del desenfoque"
-            value={focusControls.blur}
-            min={0.35}
-            max={3.5}
-            step={0.01}
-            display={`${focusControls.blur.toFixed(2)}×`}
-            onChange={updateFocus("blur")}
-          />
-          <Control
-            label="Velocidad de seguimiento"
-            value={focusControls.follow}
-            min={3}
-            max={30}
-            step={0.5}
-            display={`${focusControls.follow.toFixed(1)}×`}
-            onChange={updateFocus("follow")}
-          />
-        </div>
-
-        <div
-          id="artwork-panel"
-          className="control-tab-panel"
-          role="tabpanel"
-          aria-labelledby="artwork-tab"
-          hidden={activeControlTab !== "artwork"}
-        >
-          <div className="toggle-control loading-preview-control">
-            <div>
-              <span>Simular loading</span>
-              <small>Mantiene visible la pantalla de carga para editarla</small>
-            </div>
-            <button
-              className={`toggle-switch ${
-                loadingPreview ? "is-active" : ""
-              }`}
-              type="button"
-              role="switch"
-              aria-checked={loadingPreview}
-              onClick={() => setLoadingPreview((current) => !current)}
-            >
-              <span aria-hidden="true" />
-              <span className="sr-only">
-                {loadingPreview
-                  ? "Ocultar simulación de loading"
-                  : "Mostrar simulación de loading"}
-              </span>
-            </button>
-          </div>
-          <div className="transition-section">
-            <div className="section-label">
-              <span>Transición entre diseños</span>
-              <span className="color-code">
-                {transitionMode === "touch"
-                  ? "TOQUE"
-                  : transitionMode === "tear"
-                    ? "RASGADO"
-                    : transitionMode === "logo"
-                      ? "LOGO"
-                      : "TRAMA"}
-              </span>
-            </div>
-            <div
-              className="transition-options"
-              role="group"
-              aria-label="Estilo de transición entre banderas"
-            >
-              {TRANSITION_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  className={`transition-option ${
-                    transitionMode === option.id ? "is-active" : ""
-                  }`}
-                  type="button"
-                  aria-pressed={transitionMode === option.id}
-                  onClick={() => setTransitionMode(option.id)}
-                >
-                  <span>{option.label}</span>
-                  <small>{option.detail}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="artwork-row">
-            <div className="artwork-copy">
-              <span className="section-label">Gráfica</span>
-              <span className="file-name">{artworkName}</span>
-            </div>
-            <label className="upload-button">
-              Cargar PNG
-              <input type="file" accept="image/png,image/webp" onChange={handleArtwork} />
-            </label>
-          </div>
-          <div className="artwork-scale">
-            <Control
-              label="Escala de imagen"
-              value={artworkScale}
-              min={0.25}
-              max={2}
-              step={0.01}
-              display={`${artworkScale.toFixed(2)}×`}
-              onChange={updateArtworkScale}
-            />
-          </div>
-        </div>
-
-        <button className="pause-button" type="button" onClick={togglePause}>
-          <span aria-hidden="true">{paused ? "▶" : "Ⅱ"}</span>
-          {paused ? "Continuar animación" : "Pausar animación"}
-        </button>
-        <div className="runtime-meta" aria-label="Tecnología y rendimiento">
-          <span>Three.js · Tela Verlet · Shader GPU</span>
-          <span className="runtime-fps">
-            <span className="runtime-dot" aria-hidden="true" />
-            <span ref={fpsRef}>-- FPS</span>
-          </span>
-        </div>
-      </aside>
+      {StudioControls && controlsOpen && <Suspense fallback={<div className="controls" role="status">Cargando ajustes…</div>}>
+        <StudioControls
+          {...{
+            controlsOpen,
+            setControlsOpen,
+            settingsButtonRef,
+            reset,
+            moodEditorOpen,
+            allMoods,
+            activeMoodId,
+            applyMood,
+            removeCustomMood,
+            setMoodEditorOpen,
+            setMoodNameDraft,
+            saveCurrentMood,
+            moodNameDraft,
+            activeControlTab,
+            setActiveControlTab,
+            flagSize,
+            setFlagSize,
+            wind,
+            updateWind,
+            grabSettings,
+            updateGrab,
+            windSoundEnabled,
+            toggleWindSound,
+            windSound,
+            updateWindSound,
+            clothSoundEnabled,
+            toggleClothSound,
+            meshQuality,
+            setMeshQuality,
+            tornMode,
+            setTornMode,
+            color,
+            setColor,
+            materialSettings,
+            setMaterialSettings,
+            updateMaterial,
+            activeDesign,
+            premiereLightsEnabled,
+            setPremiereLightsEnabled,
+            lighting,
+            updateLighting,
+            setLighting,
+            backgroundSettings,
+            updateBackground,
+            focusControls,
+            setFocusControls,
+            updateFocus,
+            loadingPreview,
+            setLoadingPreview,
+            transitionMode,
+            setTransitionMode,
+            artworkName,
+            handleArtwork,
+            artworkScale,
+            updateArtworkScale,
+            togglePause,
+            paused,
+            fpsRef,
+          }}
+        />
+      </Suspense>}
     </main>
-  );
-}
-
-type ControlProps = {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  manualMax?: number;
-  step: number;
-  display: string;
-  onChange: (value: number) => void;
-};
-
-function Control({
-  label,
-  value,
-  min,
-  max,
-  manualMax,
-  step,
-  display,
-  onChange,
-}: ControlProps) {
-  const inputId = useId();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(value));
-  const numericMax = manualMax ?? max;
-  const sliderValue = THREE.MathUtils.clamp(value, min, max);
-  const progress = ((sliderValue - min) / (max - min)) * 100;
-
-  const commitDraft = () => {
-    const parsed = Number(draft.replace(",", "."));
-    if (Number.isFinite(parsed)) {
-      const clamped = THREE.MathUtils.clamp(parsed, min, numericMax);
-      const normalized = Number(clamped.toFixed(6));
-      onChange(normalized);
-      setDraft(String(normalized));
-    } else {
-      setDraft(String(value));
-    }
-    setEditing(false);
-  };
-
-  return (
-    <div className="range-control">
-      <span className="range-heading">
-        <label htmlFor={inputId}>{label}</label>
-        {editing ? (
-          <input
-            className="range-value-input"
-            type="number"
-            min={min}
-            max={numericMax}
-            step={step}
-            value={draft}
-            autoFocus
-            aria-label={`Editar ${label}`}
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitDraft}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") {
-                setDraft(String(value));
-                setEditing(false);
-              }
-            }}
-          />
-        ) : (
-          <button
-            className="range-value"
-            type="button"
-            onClick={() => {
-              setDraft(String(value));
-              setEditing(true);
-            }}
-            aria-label={`Editar valor de ${label}: ${display}`}
-          >
-            {display}
-          </button>
-        )}
-      </span>
-      <input
-        id={inputId}
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={sliderValue}
-        onChange={(event) => onChange(Number(event.target.value))}
-        style={{ "--progress": `${progress}%` } as React.CSSProperties}
-      />
-    </div>
   );
 }

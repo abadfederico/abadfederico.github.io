@@ -13,11 +13,14 @@
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    "paths": {
+      "@local-controls": ["./src/studio/LocalControls.tsx"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true
   },
-  "include": ["src", "vite.config.ts"],
+  "include": ["src", "vite.config.ts", ".local/**/*.tsx"],
   "exclude": ["node_modules"]
 }
