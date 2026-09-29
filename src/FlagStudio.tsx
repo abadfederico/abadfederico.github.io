@@ -2970,8 +2970,6 @@ export function FlagStudio() {
                     {
                       "--design-color": design.color,
                       "--identity-color": design.color,
-                      "--identity-background":
-                        design.identityBackground,
                     } as React.CSSProperties
                   }
                 >

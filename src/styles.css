@@ -310,13 +310,9 @@ button {
   margin: 0;
   padding: 8px 10px;
   overflow: visible;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(10, 10, 11, 0.58);
-  box-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(18px);
+  background: transparent;
   cursor: pointer;
   pointer-events: auto;
   scrollbar-width: none;
@@ -462,7 +458,7 @@ button {
   flex-basis: 36px;
   overflow: visible;
   border-width: 0;
-  background: var(--identity-background);
+  background: transparent;
   animation: navigation-select 560ms cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: none;
   transform: scale(1);
