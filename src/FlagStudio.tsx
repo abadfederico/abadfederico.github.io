@@ -2999,7 +2999,7 @@ export function FlagStudio() {
 
       <section
         className={`stage stage-${activeDesign ?? "custom"}`}
-        aria-label="Abad * Human"
+        aria-label="Abad * Federico"
       >
         <div
           className={`stage-loader${isLoading || loadingPreview ? "" : " is-hidden"}`}
